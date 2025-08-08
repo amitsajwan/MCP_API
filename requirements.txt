@@ -1,0 +1,12 @@
+# Core HTTP & API handling
+requests>=2.31.0
+PyYAML>=6.0.1
+
+# MCP Server Framework
+mcp>=0.1.0
+
+# FastAPI & ASGI server for MCP
+fastapi>=0.110.0
+uvicorn>=0.30.0
+
+# Logging & JSON handling (standard lib, no need to install)
