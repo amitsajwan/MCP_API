@@ -1,77 +1,40 @@
-import os
-import logging
+from fastmcp import FastMCP
 import requests
-from mcp.server.fastapi import FastAPIMCPServer
+import logging
+import os
 
-# ----------------------------
-# Configuration
-# ----------------------------
+logging.basicConfig(level=logging.INFO)
+
 LOGIN_URL = os.getenv(
     "LOGIN_URL",
     "http://localhost:8080/app/FA7/1/v1/s2s/keylink/authentication/login"
 )
-
-USERNAME = os.getenv("USER_NAME", "AmitS")
+USERNAME = os.getenv("USERNAME", "AmitS")
 PASSWORD = os.getenv("PASSWORD", "mypassword")
 
-# Optional API key headers
-API_KEY_HEADER_NAME = os.getenv("API_KEY_HEADER_NAME", "")
-API_KEY_HEADER_VALUE = os.getenv("API_KEY_HEADER_VALUE", "")
-
-logging.basicConfig(level=logging.INFO)
-
-# Shared session
 session = requests.Session()
+mcp = FastMCP(name="KeyLink API MCP")
 
-# ----------------------------
-# MCP Server Initialization
-# ----------------------------
-server = FastAPIMCPServer(name="KeyLink API MCP")
+@mcp.tool
+def login():
+    """Log in with Basic Auth and store JSESSIONID cookie."""
+    headers = {
+        "Authorization": requests.auth._basic_auth_str(USERNAME, PASSWORD),
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    resp = session.post(LOGIN_URL, headers=headers, verify=False)
+    resp.raise_for_status()
+    logging.info("Login successful.")
+    return {"cookies": session.cookies.get_dict()}
 
-# ----------------------------
-# Login Tool
-# ----------------------------
-@server.tool(
-    name="login",
-    description="Log in using Basic Auth, stores session cookies for future API calls."
-)
-def login_tool(username: str = USERNAME, password: str = PASSWORD):
-    try:
-        logging.info("Performing Basic Auth login...")
-        headers = {
-            "Authorization": requests.auth._basic_auth_str(username, password),
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        if API_KEY_HEADER_NAME and API_KEY_HEADER_VALUE:
-            headers[API_KEY_HEADER_NAME] = API_KEY_HEADER_VALUE
-
-        resp = session.post(LOGIN_URL, headers=headers, verify=False)
-        resp.raise_for_status()
-        logging.info("Login successful.")
-        return {"status": "success", "cookies": session.cookies.get_dict()}
-    except Exception as e:
-        logging.error(f"Login failed: {e}")
-        return {"status": "error", "message": str(e)}
-
-# ----------------------------
-# Example API Tool
-# ----------------------------
-@server.tool(
-    name="get_banks",
-    description="Fetch banks by module. Requires login first."
-)
+@mcp.tool
 def get_banks(module: str):
-    try:
-        url = f"http://localhost:8080/app/FA7/1/v1/s2s/keylink/banks?module={module}"
-        resp = session.get(url, verify=False)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    """Fetch banks by module using existing session."""
+    url = f"http://localhost:8080/app/FA7/1/v1/s2s/keylink/banks?module={module}"
+    resp = session.get(url, verify=False)
+    resp.raise_for_status()
+    return resp.json()
 
-# ----------------------------
-# Run MCP Server
-# ----------------------------
 if __name__ == "__main__":
-    server.run()
+    mcp.run()
