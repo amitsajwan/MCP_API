@@ -1,36 +1,32 @@
+import yaml
 import json
 import requests
 from mcp.server.fastmcp import FastMCP
-from pathlib import Path
 
-mcp = FastMCP("OpenAPI MCP Server")
+# Load the OpenAPI YAML
+with open("openapi.yaml", "r") as f:
+    spec = yaml.safe_load(f)
 
-# Load OpenAPI spec
-spec_path = Path("spec.json")
-with open(spec_path) as f:
-    spec = json.load(f)
+mcp = FastMCP("OpenAPI Tools Server")
 
-# Parse and register tools dynamically
-for path, methods in spec["paths"].items():
+# Loop through paths to create MCP tools dynamically
+for path, methods in spec.get("paths", {}).items():
     for method, details in methods.items():
-        tool_name = f"{method.upper()}_{path.strip('/').replace('/', '_') or 'root'}"
-        summary = details.get("summary", "")
-        parameters = details.get("parameters", [])
+        tool_name = f"{method.upper()}_{path.strip('/').replace('/', '_')}"
+        summary = details.get("summary", f"{method.upper()} {path}")
 
-        # Build MCP parameters
-        mcp_params = {}
-        for param in parameters:
-            name = param["name"]
-            schema_type = param.get("schema", {}).get("type", "string")
-            mcp_params[name] = {
-                "type": schema_type,
-                "description": param.get("description", "")
+        params = {}
+        for param in details.get("parameters", []):
+            params[param["name"]] = {
+                "type": "string",  # simplification — can be expanded
+                "description": param.get("description", ""),
             }
 
-        @mcp.tool(name=tool_name, description=summary, parameters=mcp_params)
-        def dynamic_tool(**kwargs):
-            url = f"http://localhost:5000{path}"  # Change to real API base URL
-            resp = requests.request(method, url, params=kwargs)
+        @mcp.tool(name=tool_name, description=summary)
+        def api_tool(**kwargs):
+            url = spec["servers"][0]["url"] + path
+            resp = requests.request(method.upper(), url, params=kwargs)
             return resp.json()
 
+print(f"✅ Loaded {len(mcp.tools)} tools from OpenAPI spec")
 mcp.run()
