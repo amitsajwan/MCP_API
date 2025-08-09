@@ -1,55 +1,46 @@
-import subprocess
-import json
+import os
 import sys
+import logging
+import requests
+from fastmcp import FastMCP
 
-SERVER_CMD = [sys.executable, "server.py"]
+# Send logs to stderr so MCP stdout is clean
+logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
-proc = subprocess.Popen(
-    SERVER_CMD,
-    stdin=subprocess.PIPE,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    text=True
-)
+# Config
+LOGIN_URL = os.getenv("LOGIN_URL", "http://localhost:8081/api/v1/keylink/authentication/login")
+USERNAME = os.getenv("USERNAME", "AmitS")
+PASSWORD = os.getenv("PASSWORD", "mypassword")
 
-def send(req):
-    proc.stdin.write(json.dumps(req) + "\n")
-    proc.stdin.flush()
+# Global session
+session = requests.Session()
 
-def read():
-    return json.loads(proc.stdout.readline())
+# MCP Server
+mcp = FastMCP(name="KeyLink API MCP", description="MCP server for KeyLink APIs")
 
-# 1. Initialize handshake
-send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-print("INIT RESP:", read())
-
-# 2. List tools
-send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-tools_resp = read()
-print("TOOLS:", tools_resp)
-
-# Find the login tool name
-tool_name = None
-for t in tools_resp.get("result", {}).get("tools", []):
-    if t["name"] == "login":
-        tool_name = t["name"]
-        break
-
-if not tool_name:
-    print("Login tool not found!")
-    proc.terminate()
-    sys.exit(1)
-
-# 3. Call login tool
-send({
-    "jsonrpc": "2.0",
-    "id": 3,
-    "method": "tools/call",
-    "params": {
-        "name": tool_name,
-        "arguments": {}  # if tool has params, pass them here
+@mcp.tool()
+def login():
+    """Log in with Basic Auth and store JSESSIONID cookie."""
+    headers = {
+        "Authorization": requests.auth._basic_auth_str(USERNAME, PASSWORD),
+        "Accept": "application/json",
+        "Content-Type": "application/json",
     }
-})
-print("LOGIN RESP:", read())
+    logging.info(f"Logging in to {LOGIN_URL} as {USERNAME}")
+    resp = session.post(LOGIN_URL, headers=headers, verify=False)
+    resp.raise_for_status()
+    logging.info("Login successful.")
+    return {"cookies": session.cookies.get_dict()}
 
-proc.terminate()
+@mcp.tool()
+def get_banks(module: str):
+    """Fetch banks by module using existing session."""
+    url = f"http://localhost:8081/api/v1/keylink/banks?module={module}"
+    logging.info(f"Fetching banks for module={module}")
+    resp = session.get(url, verify=False)
+    resp.raise_for_status()
+    return resp.json()
+
+if __name__ == "__main__":
+    logging.info("✅ Starting MCP server...")
+    mcp.run()
