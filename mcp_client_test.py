@@ -2,10 +2,8 @@ import subprocess
 import json
 import sys
 
-# Path to your server script
 SERVER_CMD = [sys.executable, "server.py"]
 
-# Start the MCP server
 proc = subprocess.Popen(
     SERVER_CMD,
     stdin=subprocess.PIPE,
@@ -14,28 +12,44 @@ proc = subprocess.Popen(
     text=True
 )
 
-# Helper to send JSON-RPC request
-def send_request(method, params=None, id=1):
-    req = {
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": method
-    }
-    if params is not None:
-        req["params"] = params
-    msg = json.dumps(req) + "\n"
-    proc.stdin.write(msg)
+def send(req):
+    proc.stdin.write(json.dumps(req) + "\n")
     proc.stdin.flush()
 
-# Example: Call "login" tool
-send_request("tools/call", {
-    "name": "login",
-    "arguments": {}
+def read():
+    return json.loads(proc.stdout.readline())
+
+# 1. Initialize handshake
+send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+print("INIT RESP:", read())
+
+# 2. List tools
+send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+tools_resp = read()
+print("TOOLS:", tools_resp)
+
+# Find the login tool name
+tool_name = None
+for t in tools_resp.get("result", {}).get("tools", []):
+    if t["name"] == "login":
+        tool_name = t["name"]
+        break
+
+if not tool_name:
+    print("Login tool not found!")
+    proc.terminate()
+    sys.exit(1)
+
+# 3. Call login tool
+send({
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+        "name": tool_name,
+        "arguments": {}  # if tool has params, pass them here
+    }
 })
+print("LOGIN RESP:", read())
 
-# Read one response line
-print("Response from MCP server:")
-print(proc.stdout.readline())
-
-# Cleanup
 proc.terminate()
