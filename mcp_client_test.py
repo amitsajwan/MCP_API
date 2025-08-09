@@ -1,43 +1,37 @@
 import asyncio
-import json
-import sys
-from websockets import connect
+import pprint
+from fastmcp import Client
+from fastmcp.transports import StreamableHttpTransport
 
-# MCP WebSocket server URL (change to your backend's MCP route if needed)
-MCP_URL = "ws://localhost:8000/mcp"  # example — replace if your server has a different path
+SERVER_URL = "http://127.0.0.1:8000/mcp"
+pp = pprint.PrettyPrinter(indent=2, width=100)
 
-async def test_mcp():
-    async with connect(MCP_URL) as websocket:
-        print("[Client] Connected to MCP server")
+async def main():
+    transport = StreamableHttpTransport(url=SERVER_URL)
+    client = Client(transport)
 
-        # Send a request to list tools
-        request = {
-            "type": "list_tools",
-            "id": "1",
-            "params": {}
-        }
-        await websocket.send(json.dumps(request))
-        print("[Client] Sent list_tools request")
+    async with client:
+        print(f"\n🔌 Connecting to MCP server at {SERVER_URL}...")
 
-        # Receive and print the response
-        response = await websocket.recv()
-        print("[Client] Response:", response)
+        # 1. Ping
+        print("\n🛠 Testing connectivity...")
+        await client.ping()
+        print("✅ Server is reachable!\n")
 
-        # OPTIONAL: Call a tool if it exists
-        tools_data = json.loads(response)
-        if "tools" in tools_data.get("result", {}):
-            first_tool = tools_data["result"]["tools"][0]["name"]
-            call_request = {
-                "type": "call_tool",
-                "id": "2",
-                "params": {
-                    "name": first_tool,
-                    "arguments": {}
-                }
-            }
-            await websocket.send(json.dumps(call_request))
-            call_response = await websocket.recv()
-            print("[Client] Tool Call Response:", call_response)
+        # 2. List tools
+        print("📋 Available tools:")
+        tools = await client.list_tools()
+        pp.pprint(tools)
+
+        # 3. Call login tool
+        print("\n🔑 Calling login tool...")
+        login_resp = await client.call_tool("login")
+        pp.pprint(login_resp)
+
+        # 4. Call get_banks tool
+        print("\n🏦 Calling get_banks tool for module='ABC'...")
+        banks_resp = await client.call_tool("get_banks", module="ABC")
+        pp.pprint(banks_resp)
 
 if __name__ == "__main__":
-    asyncio.run(test_mcp())
+    asyncio.run(main())
