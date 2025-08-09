@@ -1,52 +1,28 @@
 import os
-import logging
-import ssl
+import base64
 import re
-from requests.adapters import HTTPAdapter
-from urllib3.poolmanager import PoolManager
+import logging
 import requests
 from dotenv import load_dotenv
 
-# Load environment variables
+# -----------------------------------------------------------------------------
+# Load configuration
+# -----------------------------------------------------------------------------
 load_dotenv()
 
-# Logging setup
-logging.basicConfig(level=logging.INFO)
+LOGIN_URL = os.getenv("LOGIN_URL")  # e.g. http://localhost:8081/api/v1/keylink/authentication/login
+USERNAME = os.getenv("USERNAME")
+PASSWORD = os.getenv("PASSWORD")
+API_KEY_HEADER_NAME = os.getenv("API_KEY_HEADER_NAME", "X-API-KEY")  # optional, if needed
+API_KEY_HEADER_VALUE = os.getenv("API_KEY_HEADER_VALUE", "")          # optional, if needed
 
-# Environment variables
-load_balancer_url = os.getenv("LOAD_BALANCER_URL")
-login_alias = os.getenv("LOGIN_ALIAS")
-password = os.getenv("ACCESS_CARD_PASSWORD")
-login_endpoint = os.getenv("LOGIN_ENDPOINT")
-schema_url = os.getenv("SCHEMA_URL")
-api_key_header_name = os.getenv("API_KEY_HEADER_NAME", "X-API-KEY")
-api_key_header_value = os.getenv("API_KEY_HEADER_VALUE")
-http_proxy = os.getenv("HTTP_PROXY")
-https_proxy = os.getenv("HTTPS_PROXY")
-
-# Proxy setup
-proxies = {
-    "http": http_proxy,
-    "https": https_proxy
-} if http_proxy and https_proxy else None
-
-# Token cache file
 TOKEN_CACHE_FILE = "token_cache.txt"
 
-# SSL Adapter
-class SSLContextAdapter(HTTPAdapter):
-    def init_poolmanager(self, *args, **kwargs):
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-        kwargs["ssl_context"] = context
-        return super().init_poolmanager(*args, **kwargs)
+logging.basicConfig(level=logging.INFO)
 
-# Session setup
-session = requests.Session()
-session.mount("https://", SSLContextAdapter())
-
-# Save/Load token
+# -----------------------------------------------------------------------------
+# Helper functions
+# -----------------------------------------------------------------------------
 def save_token(token):
     with open(TOKEN_CACHE_FILE, "w") as f:
         f.write(token)
@@ -57,61 +33,39 @@ def load_token():
             return f.read().strip()
     return None
 
-# Login process
-def access_card_login():
+def get_basic_auth_header():
+    """Mimics Java getBasicAuthorizationHeaderValue()"""
+    credentials = f"{USERNAME}:{PASSWORD}"
+    encoded = base64.b64encode(credentials.encode()).decode()
+    return f"Basic {encoded}"
+
+# -----------------------------------------------------------------------------
+# Login function
+# -----------------------------------------------------------------------------
+def login_and_get_session():
     cached_token = load_token()
+    session = requests.Session()
+
     if cached_token:
-        logging.info("Using cached JSESSIONID.")
-        session.headers.update({"Cookie": f"JSESSIONID={cached_token}"})
-        return cached_token
+        logging.info("Using cached JSESSIONID...")
+        session.cookies.set("JSESSIONID", cached_token)
+        return session
 
-    logging.info("Performing login flow...")
+    logging.info("Performing Basic Auth login...")
 
-    # Step 1: Redirect
-    resp = session.get(load_balancer_url, allow_redirects=False, proxies=proxies)
-    resp.raise_for_status()
-    location = resp.headers.get("Location")
-    if not location:
-        raise RuntimeError("Missing Location header in redirect.")
-    direct_url = location.split("/global")[0]
-
-    # Step 2: Init
-    resp = session.get(location, proxies=proxies)
-    resp.raise_for_status()
-
-    # Step 3: Alias
-    send_user_url = f"{direct_url}/global/login?login&legitimationtype=accessCard&loginalias={login_alias}"
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    resp = session.post(send_user_url, headers=headers, proxies=proxies)
-    resp.raise_for_status()
-
-    # Step 4: Challenge
-    if len(password) != 8:
-        raise ValueError("ACCESS_CARD_PASSWORD must be exactly 8 characters.")
-    challenge_parts = [password[i:i+2] for i in range(0, 8, 2)]
-    challenge_payload = (
-        f"loginalias_check={login_alias}&lastRequestAuthMethod=authenticate"
-        f"&loginMethodSelect=accessCard&response1={challenge_parts[0]}"
-        f"&response2={challenge_parts[1]}&response3={challenge_parts[2]}"
-        f"&response4={challenge_parts[3]}&submit=Log in"
-    )
-    challenge_url = f"{direct_url}/global/login?login"
-    resp = session.post(challenge_url, headers=headers, data=challenge_payload, proxies=proxies)
-    resp.raise_for_status()
-
-    # Step 5: Final login
-    application_login_url = f"{direct_url}{schema_url}{login_endpoint}"
-    final_headers = {
+    headers = {
+        "Authorization": get_basic_auth_header(),
         "Accept": "application/json",
-        api_key_header_name: api_key_header_value
+        "Content-Type": "application/json",
     }
-    resp = session.post(application_login_url, headers=final_headers, proxies=proxies)
+
+    if API_KEY_HEADER_VALUE:
+        headers[API_KEY_HEADER_NAME] = API_KEY_HEADER_VALUE
+
+    resp = session.post(LOGIN_URL, headers=headers, verify=False)
     resp.raise_for_status()
 
-    print(f"Final login status: {resp.status_code}")
-    print(resp.headers)
-
-    # Extract JSESSIONID
+    # Extract JSESSIONID from Set-Cookie
     token = None
     if "set-cookie" in resp.headers:
         match = re.search(r'JSESSIONID=([^;]+)', resp.headers["set-cookie"])
@@ -119,12 +73,23 @@ def access_card_login():
             token = match.group(1)
 
     if not token:
-        raise RuntimeError("Failed to obtain JSESSIONID.")
+        raise RuntimeError("No JSESSIONID found in login response.")
 
     save_token(token)
-    session.headers.update({"Cookie": f"JSESSIONID={token}"})
-    return token
+    logging.info(f"JSESSIONID obtained: {token}")
+    return session
 
+# -----------------------------------------------------------------------------
+# Example usage
+# -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    token = access_card_login()
-    print("Session token:", token)
+    session = login_and_get_session()
+
+    # Example authenticated call:
+    url = os.getenv("TEST_API_URL")  # e.g. http://localhost:8081/api/v1/keylink/someendpoint
+    if url:
+        resp = session.get(url, verify=False)
+        print("Response status:", resp.status_code)
+        print("Response body:", resp.text)
+    else:
+        print("Session ready. Use 'session' object for further requests.")
