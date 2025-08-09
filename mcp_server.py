@@ -6,13 +6,13 @@ logging.basicConfig(level=logging.INFO)
 
 USERNAME = "myuser"
 PASSWORD = "mypass"
-LOGIN_URL = "http://localhost:8081/api/v1/keylink/login"
+LOGIN_URL = "http://localhost:8081/api/v1/employee/login"
 
 session = requests.Session()
 
-mcp = FastMCP(name="KeyLink API MCP")
+mcp = FastMCP(name="employee API MCP")
 
-@mcp.tool(description="Log in to KeyLink API using Basic Auth and return session cookies")
+@mcp.tool(description="Log in to employee API using Basic Auth and return session cookies")
 def login():
     headers = {
         "Authorization": requests.auth._basic_auth_str(USERNAME, PASSWORD),
@@ -34,7 +34,7 @@ def login():
     }
 )
 def get_banks(module: str):
-    url = f"http://localhost:8081/api/v1/keylink/banks?module={module}"
+    url = f"http://localhost:8081/api/v1/employee/banks?module={module}"
     resp = session.get(url, verify=False)
     resp.raise_for_status()
     return resp.json()
