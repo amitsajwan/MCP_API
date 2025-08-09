@@ -10,11 +10,13 @@ from dotenv import load_dotenv
 # -----------------------------------------------------------------------------
 load_dotenv()
 
-LOGIN_URL = os.getenv("LOGIN_URL")  # e.g. http://localhost:8081/api/v1/keylink/authentication/login
-USERNAME = os.getenv("USERNAME")
-PASSWORD = os.getenv("PASSWORD")
-API_KEY_HEADER_NAME = os.getenv("API_KEY_HEADER_NAME", "X-API-KEY")  # optional, if needed
-API_KEY_HEADER_VALUE = os.getenv("API_KEY_HEADER_VALUE", "")          # optional, if needed
+LOGIN_URL = os.getenv("LOGIN_URL") or "http://localhost:8080/app/FA7/1/v1/s2s/keylink/authentication/login"
+BANKS_URL = os.getenv("BANKS_URL") or "http://localhost:8080/app/FA7/1/v1/s2s/keylink/banks?module=MAILBOX_OUTBOX"
+
+USERNAME = os.getenv("USER_NAME") or "AmitS"
+PASSWORD = os.getenv("PASSWORD") or "test123"
+API_KEY_HEADER_NAME = os.getenv("API_KEY_HEADER_NAME", "X-API-KEY")
+API_KEY_HEADER_VALUE = os.getenv("API_KEY_HEADER_VALUE", "")
 
 TOKEN_CACHE_FILE = "token_cache.txt"
 
@@ -34,13 +36,12 @@ def load_token():
     return None
 
 def get_basic_auth_header():
-    """Mimics Java getBasicAuthorizationHeaderValue()"""
     credentials = f"{USERNAME}:{PASSWORD}"
     encoded = base64.b64encode(credentials.encode()).decode()
     return f"Basic {encoded}"
 
 # -----------------------------------------------------------------------------
-# Login function
+# Login
 # -----------------------------------------------------------------------------
 def login_and_get_session():
     cached_token = load_token()
@@ -65,7 +66,6 @@ def login_and_get_session():
     resp = session.post(LOGIN_URL, headers=headers, verify=False)
     resp.raise_for_status()
 
-    # Extract JSESSIONID from Set-Cookie
     token = None
     if "set-cookie" in resp.headers:
         match = re.search(r'JSESSIONID=([^;]+)', resp.headers["set-cookie"])
@@ -80,16 +80,12 @@ def login_and_get_session():
     return session
 
 # -----------------------------------------------------------------------------
-# Example usage
+# Test GET /banks
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     session = login_and_get_session()
 
-    # Example authenticated call:
-    url = os.getenv("TEST_API_URL")  # e.g. http://localhost:8081/api/v1/keylink/someendpoint
-    if url:
-        resp = session.get(url, verify=False)
-        print("Response status:", resp.status_code)
-        print("Response body:", resp.text)
-    else:
-        print("Session ready. Use 'session' object for further requests.")
+    logging.info(f"Testing GET {BANKS_URL}")
+    resp = session.get(BANKS_URL, verify=False)
+    logging.info(f"Status: {resp.status_code}")
+    logging.info(f"Body: {resp.text}")
