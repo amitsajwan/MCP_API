@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 # -----------------------------------------------------------------------------
 load_dotenv()
 
-LOGIN_URL = os.getenv("LOGIN_URL") or "http://localhost:8080/app/FA7/1/v1/s2s/keylink/authentication/login"
-BANKS_URL = os.getenv("BANKS_URL") or "http://localhost:8080/app/FA7/1/v1/s2s/keylink/banks?module=MAILBOX_OUTBOX"
+LOGIN_URL = os.getenv("LOGIN_URL") or "http://localhost:8080/app/FA7/1/v1/s2s/employee/authentication/login"
+BANKS_URL = os.getenv("BANKS_URL") or "http://localhost:8080/app/FA7/1/v1/s2s/employee/banks?module=MAILBOX_OUTBOX"
 
 USERNAME = os.getenv("USER_NAME") or "AmitS"
 PASSWORD = os.getenv("PASSWORD") or "test123"
