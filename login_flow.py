@@ -54,6 +54,11 @@ def login_and_get_session():
 
     logging.info("Performing Basic Auth login...")
 
+    # First, get initial cookies (pre-login handshake)
+    preflight_resp = session.get(LOGIN_URL, verify=False)
+    preflight_resp.raise_for_status()
+    logging.info(f"Preflight cookies: {session.cookies.get_dict()}")
+
     headers = {
         "Authorization": get_basic_auth_header(),
         "Accept": "application/json",
@@ -63,7 +68,8 @@ def login_and_get_session():
     if API_KEY_HEADER_VALUE:
         headers[API_KEY_HEADER_NAME] = API_KEY_HEADER_VALUE
 
-    resp = session.post(LOGIN_URL, headers=headers, verify=False)
+    # Send login request with whatever cookies we got in preflight
+    resp = session.post(LOGIN_URL, headers=headers, cookies=session.cookies, verify=False)
     resp.raise_for_status()
 
     token = None
@@ -78,6 +84,7 @@ def login_and_get_session():
     save_token(token)
     logging.info(f"JSESSIONID obtained: {token}")
     return session
+
 
 # -----------------------------------------------------------------------------
 # Test GET /banks
