@@ -164,6 +164,14 @@ class OpenAPIMCPServer:
 
                 # self._validate_openapi_spec(spec)
                 base_url = self._extract_base_url(spec)
+                # Allow environment variable override for local mock usage.
+                # FORCE_BASE_URL overrides all specs. FORCE_BASE_URL_<SPECNAME_UPPER> overrides by spec.
+                override_global = os.getenv("FORCE_BASE_URL")
+                override_spec = os.getenv(f"FORCE_BASE_URL_{spec_name.upper()}")
+                if override_spec:
+                    base_url = override_spec.rstrip('/'); logger.warning("Overriding base_url for %s -> %s", spec_name, base_url)
+                elif override_global:
+                    base_url = override_global.rstrip('/'); logger.warning("Overriding base_url (global) for %s -> %s", spec_name, base_url)
 
                 api_spec = APISpec(name=spec_name, spec=spec, base_url=base_url, file_path=file_path)
                 self.api_specs[spec_name] = api_spec
@@ -358,10 +366,31 @@ app = FastAPI(title="OpenAPI MCP Server")
 OPENAPI_DIR = os.getenv("OPENAPI_DIR", "./openapi_specs")
 server = OpenAPIMCPServer(openapi_dir=OPENAPI_DIR)
 
+# Optional LLM bridge router (safe if file absent)
+try:
+    from llm_mcp_bridge import router as llm_router
+    app.include_router(llm_router)
+    logger.info("LLM bridge router mounted at /llm/route")
+except Exception as _e:  # noqa
+    logger.debug("LLM bridge not loaded: %s", _e)
+
 @app.get("/mcp/tools")
 async def list_tools():
     tool_map = await server.mcp.get_tools()
-    return {"tools": [{"name": name, "description": tool.description} for name, tool in tool_map.items()]}
+    seen = set()
+    tools = []
+    for name, tool in tool_map.items():
+        base = name
+        if re.search(r'_\d+$', name):
+            base = re.sub(r'_\d+$', '', name)
+            if base in seen:
+                continue
+        if base in seen:
+            # already captured (canonical wins)
+            continue
+        seen.add(base)
+        tools.append({"name": name, "description": tool.description})
+    return {"tools": tools}
 
 @app.get("/mcp/endpoints")
 async def list_endpoints():

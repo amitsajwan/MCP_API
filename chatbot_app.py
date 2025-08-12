@@ -66,6 +66,19 @@ class ChatResponse(BaseModel):
     session_id: str
     timestamp: str
 
+class AssistantRequest(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+    auto_execute: bool = True
+    max_tools: int = 1
+
+class AssistantResponse(BaseModel):
+    mode: str = "assistant"
+    message: str
+    session_id: str
+    plan: Dict[str, Any]
+    executions: Optional[Any] = None
+
 
 class ConfigurationRequest(BaseModel):
     username: str
@@ -122,6 +135,122 @@ async def get_tools():
 @app.get("/")
 async def root():
     return {"message": "React UI available separately. See frontend/ directory.", "endpoints": ["/configure", "/chat", "/status", "/tools", "/quick_actions", "/run_tool"]}
+
+@app.get("/simple", response_class=HTMLResponse)
+async def simple_ui():
+        """Return a minimal, dependency-free conversational UI (assistant-aware)."""
+        html = """
+        <!DOCTYPE html>
+        <html lang='en'>
+        <head>
+            <meta charset='UTF-8'/>
+            <title>API Assistant (Simple)</title>
+            <style>
+                :root { color-scheme: dark; }
+                body { margin:0; font-family: system-ui,-apple-system,Segoe UI,Arial,sans-serif; background:#111; color:#eee; display:flex; flex-direction:column; height:100vh; }
+                header { padding:0.75rem 1rem; background:#181818; font-weight:600; letter-spacing:.5px; }
+                #log { flex:1; overflow:auto; padding:1rem; line-height:1.4; }
+                .msg { margin:0 0 .85rem; }
+                .msg.user { color:#9ad6ff; }
+                .msg.assistant { color:#c6f6c6; }
+                .msg.system { color:#aaa; font-style:italic; }
+                .bubble { padding:.6rem .75rem; background:#222; border-radius:8px; display:inline-block; max-width:70ch; white-space:pre-wrap; word-break:break-word; }
+                .user .bubble { background:#123d55; }
+                .assistant .bubble { background:#1d3d1d; }
+                form { display:flex; gap:.5rem; padding:.75rem; background:#181818; }
+                input[type=text] { flex:1; padding:.55rem .7rem; border:1px solid #333; border-radius:6px; background:#101010; color:#eee; }
+                input[type=text]:focus { outline:2px solid #2c5aa0; }
+                button { padding:.55rem 1rem; border:1px solid #2d5fff; background:#2d5fff; color:#fff; border-radius:6px; cursor:pointer; font-weight:600; }
+                button:disabled { opacity:.55; cursor:progress; }
+                .toolbar { display:flex; gap:1rem; align-items:center; padding:0 .75rem .5rem; font-size:.8rem; flex-wrap:wrap; }
+                label { display:inline-flex; align-items:center; gap:.35rem; cursor:pointer; }
+                .small { font-size:.7rem; opacity:.65; }
+                #status { font-size:.7rem; opacity:.7; margin-left:auto; }
+                a { color:#58a6ff; }
+            </style>
+        </head>
+        <body>
+            <header>API Assistant (Simple)</header>
+            <div class='toolbar'>
+                <label><input type='checkbox' id='assistant' checked/> Assistant Auto Tools</label>
+                <label>Max Tools <input type='number' id='maxTools' min='1' max='5' value='1' style='width:60px;'/></label>
+                <span class='small'>Type a prompt like: <code>pending payments status=pending</code> or <code>cash summary</code></span>
+                <span id='status'>Idle</span>
+            </div>
+            <div id='log'></div>
+            <form id='chatForm'>
+                <input id='input' type='text' autocomplete='off' placeholder='Ask something (e.g., show pending payments status=pending)' />
+                <button id='sendBtn' type='submit'>Send</button>
+            </form>
+            <script>
+                const logEl = document.getElementById('log');
+                const form = document.getElementById('chatForm');
+                const input = document.getElementById('input');
+                const assistantToggle = document.getElementById('assistant');
+                const maxTools = document.getElementById('maxTools');
+                const statusEl = document.getElementById('status');
+                const sendBtn = document.getElementById('sendBtn');
+
+                function add(role, content){
+                    const wrap = document.createElement('div');
+                    wrap.className = 'msg ' + role;
+                    const bubble = document.createElement('div');
+                    bubble.className = 'bubble';
+                    if(typeof content === 'object') content = JSON.stringify(content, null, 2);
+                    bubble.textContent = content;
+                    wrap.appendChild(bubble);
+                    logEl.appendChild(wrap);
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+
+                add('system', 'Assistant ready.');
+
+                async function callAssistant(message){
+                    const body = {
+                        message,
+                        auto_execute: true,
+                        max_tools: parseInt(maxTools.value)||1
+                    };
+                    const resp = await fetch('/assistant/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+                    if(!resp.ok) throw new Error('HTTP '+resp.status);
+                        return resp.json();
+                }
+                async function callChat(message){
+                    const body = {message};
+                    const resp = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+                    if(!resp.ok) throw new Error('HTTP '+resp.status);
+                    return resp.json();
+                }
+
+                form.addEventListener('submit', async (e)=>{
+                    e.preventDefault();
+                    const text = input.value.trim();
+                    if(!text) return;
+                    input.value='';
+                    add('user', text);
+                    statusEl.textContent = 'Thinking…';
+                    sendBtn.disabled = true;
+                    try {
+                        let result;
+                        if(assistantToggle.checked){
+                            result = await callAssistant(text);
+                        } else {
+                            result = await callChat(text); // returns ChatResponse shape
+                        }
+                        add('assistant', result.response || result.plan || result);
+                    } catch(err){
+                        add('assistant', 'Error: '+ err.message);
+                    } finally {
+                        sendBtn.disabled = false;
+                        statusEl.textContent = 'Idle';
+                        input.focus();
+                    }
+                });
+            </script>
+        </body>
+        </html>
+        """
+        return HTMLResponse(content=html)
 
 @app.get("/quick_actions")
 async def quick_actions():
@@ -249,6 +378,107 @@ async def chat_endpoint(req: ChatRequest):
     session["conversation_history"].append({"role": "assistant", "content": answer, "timestamp": datetime.now().isoformat()})
 
     return ChatResponse(response=answer, session_id=session_id, timestamp=datetime.now().isoformat())
+
+
+def _score_tool(message_tokens: set, tool_name: str, description: str) -> tuple[float, set]:
+    """Very lightweight relevance score: token overlap across name/description."""
+    name_tokens = {t.lower() for t in tool_name.replace('_', ' ').split()}
+    desc_tokens = {t.lower() for t in (description or '').replace('_', ' ').split()}
+    all_tokens = name_tokens | desc_tokens
+    overlap = message_tokens & all_tokens
+    # heuristic: weight name matches slightly higher
+    score = 0.0
+    for tok in overlap:
+        score += (1.5 if tok in name_tokens else 1.0)
+    # normalize by log size to avoid bias toward long names
+    if all_tokens:
+        score = score / (len(all_tokens) ** 0.5)
+    return score, overlap
+
+def _parse_inline_args(message: str) -> Dict[str, Any]:
+    """Parse simple key=value pairs in the message (e.g., status=pending limit=5)."""
+    args: Dict[str, Any] = {}
+    for part in message.split():
+        if '=' in part:
+            k, v = part.split('=', 1)
+            k = k.strip().lower()
+            v = v.strip().strip(',')
+            # naive casting
+            if v.isdigit():
+                args[k] = int(v)
+            else:
+                try:
+                    args[k] = float(v)
+                except ValueError:
+                    args[k] = v
+    return args
+
+@app.post('/assistant/chat', response_model=AssistantResponse)
+async def assistant_chat(req: AssistantRequest):
+    """Assistant mode: attempt to map natural language to one or more tools and execute them.
+    Returns a plan (candidate tools with scores + chosen selection) and optional execution results.
+    """
+    global mcp_client
+    if not mcp_client:
+        raise HTTPException(status_code=503, detail='MCP client not initialized')
+
+    session_id = req.session_id or 'default'
+    session = get_or_create_session(session_id)
+    session['conversation_history'].append({'role': 'user', 'content': req.message, 'timestamp': datetime.now().isoformat()})
+
+    # Ensure specs known (list tools)
+    tools_list = await mcp_client.list_tools()
+    if tools_list.get('status') != 'success':
+        raise HTTPException(status_code=502, detail='Could not list tools')
+    tool_objs = tools_list.get('tools', [])
+
+    # Tokenize message + simple inference (pending -> status=pending if not already provided)
+    raw_tokens = [t.lower().strip(',.!?') for t in req.message.split() if t]
+    inline_args = _parse_inline_args(req.message)
+    if 'pending' in raw_tokens and 'status' not in inline_args:
+        inline_args['status'] = 'pending'
+    message_tokens = set(raw_tokens)
+
+    scored = []
+    for t in tool_objs:
+        name = t.get('name') if isinstance(t, dict) else str(t)
+        desc = t.get('description', '') if isinstance(t, dict) else ''
+        score, overlap = _score_tool(message_tokens, name, desc)
+        if score > 0:
+            scored.append({'tool': name, 'score': round(score, 4), 'overlap': sorted(list(overlap))})
+
+    # Fallback: if nothing matched, provide suggestions listing tools
+    if not scored:
+        plan = {
+            'candidates': [],
+            'selected': [],
+            'note': 'No obvious tool match; try mentioning a resource like payments, transactions, summary.'
+        }
+        return AssistantResponse(message=req.message, session_id=session_id, plan=plan, executions=None)
+
+    scored.sort(key=lambda x: x['score'], reverse=True)
+    selected = [c['tool'] for c in scored[: max(1, req.max_tools)]]
+
+    # inline_args already parsed / augmented above
+
+    executions = []
+    if req.auto_execute:
+        for tool_name in selected:
+            try:
+                result = await mcp_client.call_tool(tool_name, **inline_args)
+                executions.append({'tool': tool_name, 'status': 'success', 'result': result})
+            except Exception as e:
+                executions.append({'tool': tool_name, 'status': 'error', 'error': str(e)})
+
+    plan = {
+        'candidates': scored,
+        'selected': selected,
+        'arguments': inline_args,
+        'executed': bool(executions)
+    }
+    # Append assistant reply summary to history
+    session['conversation_history'].append({'role': 'assistant', 'content': plan, 'timestamp': datetime.now().isoformat()})
+    return AssistantResponse(message=req.message, session_id=session_id, plan=plan, executions=executions)
 
 
 @app.get("/status")

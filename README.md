@@ -1,22 +1,27 @@
-# OpenAPI MCP Server
+A comprehensive Model Context Protocol (MCP) server that dynamically loads OpenAPI specifications and exposes REST APIs as tools for chatbot integration. Perfect for financial institutions and enterprises that need to provide conversational access to their APIs.
+# OpenAPI MCP Server (Simplified Edition)
+
+Minimal, LLM-ready bridge that:
+- Auto-loads OpenAPI specs from `openapi_specs/` and converts each endpoint into a tool
+- Provides HTTP introspection + execution endpoints under `/mcp/*`
+- Offers a simple FastAPI chatbot proxy and a very small React chat UI (or minimal HTML UI at `/simple`)
+- Includes an optional LLM planning endpoint (`/llm/agent`) and lightweight heuristic assistant (`/assistant/chat`)
+
+This is a trimmed, cleaner version: legacy experimental scripts and duplicate server variants removed.
 
 A comprehensive Model Context Protocol (MCP) server that dynamically loads OpenAPI specifications and exposes REST APIs as tools for chatbot integration. Perfect for financial institutions and enterprises that need to provide conversational access to their APIs.
 
-## 🚀 Features
+## 🚀 Core Features
 
-### Core Capabilities
-- **Dynamic OpenAPI Loading**: Automatically load and validate OpenAPI 3.0.3 specifications
-- **Parallel API Execution**: Execute multiple API calls simultaneously for better performance
-- **Intelligent Routing**: Natural language query routing to relevant APIs
-- **Financial Summaries**: Comprehensive summaries across cash, securities, CLS, and mailbox APIs
-- **Payment Approvals**: Cross-system payment approval status checking
-- **Authentication Support**: Multiple auth methods (Basic, Bearer, OAuth2)
+### Core
+- Dynamic OpenAPI loading -> tools
+- Tool execution over HTTP or MCP transport (stdio/http)
+- Base URL override via `FORCE_BASE_URL` or `FORCE_BASE_URL_<SPEC>` (useful for mock server)
+- Simple assistant: naive relevance scoring + inline arg parse (adds `status=pending` if you just say pending)
+- LLM agent (OpenAI optional) for multi-step tool planning `/llm/agent`
 
-### Pre-built Financial APIs
-- **Cash Management API**: Payments, transactions, approvals
-- **Securities Trading API**: Portfolio, trading, settlements
-- **CLS Settlement API**: Settlements, clearing, risk metrics
-- **Mailbox API**: Messages, notifications, alerts
+### Included Demo Spec
+Cash API (payments, transactions, summary) – extend by dropping more specs in `openapi_specs/`.
 
 ### Smart Features
 - **Natural Language Processing**: Understand user intent and route to appropriate APIs
@@ -50,22 +55,19 @@ A comprehensive Model Context Protocol (MCP) server that dynamically loads OpenA
 
 ## 🚀 Quick Start
 
-### Option 1: Complete Demo (Recommended)
+### One Command Demo
 
-Start everything with one command:
-
-```bash
-python start_demo.py
+```powershell
+python start_demo.py --dev --with-mock
 ```
 
-This will:
-- ✅ Check all dependencies
-- ✅ Verify API specifications
-- ✅ Start the MCP server
-- ✅ Start the FastAPI chatbot
-- 🌐 Open http://localhost:8080 for the web interface
+Starts:
+- Mock API (port 9001)
+- MCP Server (port 8000, HTTP transport)
+- Chatbot FastAPI (port 8080)
+- (Optional) React dev UI if Node available
 
-### Option 2: Manual Startup
+### Manual Startup
 
 1. **Start the MCP Server:**
    ```bash
@@ -81,7 +83,7 @@ This will:
    - Open http://localhost:8080 in your browser
    - Start asking questions about your financial data!
 
-### 3. Test the System
+### Test Endpoints
 
 ```bash
 # Start servers
@@ -89,7 +91,7 @@ python openapi_mcp_server.py --transport http
 python chatbot_app.py
 ```
 
-### 4. Load API Specifications
+### Add / Override Specs
 
 ```python
 # Load cash management API
@@ -112,7 +114,7 @@ load_openapi_spec(
 )
 ```
 
-### 5. Use Intelligent Routing
+### Heuristic Assistant
 
 ```python
 # Natural language queries
@@ -121,7 +123,16 @@ result = intelligent_api_router("Get my portfolio overview")
 result = intelligent_api_router("Check settlement status")
 ```
 
-### 6. Get Financial Summaries
+### LLM Planning (Optional)
+
+Set an API key if you want OpenAI planning:
+```powershell
+$env:OPENAI_API_KEY = 'sk-...'
+```
+Call:
+```powershell
+Invoke-RestMethod -Uri http://localhost:8000/llm/agent -Method Post -ContentType 'application/json' -Body '{"message":"pending payments and summary","max_steps":2}'
+```
 
 ```python
 # Comprehensive financial summary
@@ -132,7 +143,7 @@ summary = get_financial_summary(
 )
 ```
 
-## 📚 API Specifications
+## 📚 Specs
 
 ### Included APIs
 
@@ -143,7 +154,7 @@ summary = get_financial_summary(
 | **CLS Settlement** | Settlement and clearing operations | Settlements, clearing, risk |
 | **Mailbox** | Communication and notifications | Messages, alerts, notifications |
 
-### Adding Your Own APIs
+### Adding Specs
 
 1. **Create OpenAPI YAML file**:
    ```yaml
@@ -172,7 +183,7 @@ summary = get_financial_summary(
    )
    ```
 
-## 🔧 Core MCP Tools
+## 🔧 Core Tools
 
 ### Management Tools
 - `load_openapi_spec`: Load and validate OpenAPI specifications
@@ -184,7 +195,7 @@ summary = get_financial_summary(
 - `get_financial_summary`: Get comprehensive financial summaries
 - `check_payment_approvals`: Check payment approval status across systems
 
-## 💬 Natural Language Queries
+## 💬 Natural Language Examples
 
 The system understands various natural language patterns:
 
@@ -250,7 +261,10 @@ load_openapi_spec(
 )
 ```
 
-## 🤖 FastAPI Chatbot Interface
+## 🤖 Interaction Options
+1. Minimal HTML: http://localhost:8080/simple
+2. Simple React Chat (launch dev server in `frontend/`)
+3. Programmatic: /mcp/tools, /mcp/tools/{tool}, /assistant/chat, /llm/agent
 
 The project includes a modern web-based chatbot interface built with FastAPI that provides:
 
@@ -348,7 +362,7 @@ results = execute_parallel_apis(tool_calls)
 print(results)
 ```
 
-## 🏗️ Architecture
+## 🏗️ Architecture (Slim)
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
@@ -405,7 +419,16 @@ The system includes comprehensive error handling:
 3. **Network Security**: Use HTTPS for all API communications
 4. **Input Validation**: Validate all user inputs before API calls
 
-## 📁 File Structure
+## 📁 Key Files
+```
+openapi_mcp_server.py   # Core server + FastAPI introspection
+chatbot_app.py          # Chat/assistant proxy + simple UI route (/simple)
+llm_mcp_bridge.py       # LLM agent & route helpers
+mock_api_server.py      # Local mock cash API
+start_demo.py           # Unified launcher
+frontend/               # Minimal React SimpleChatApp (optional)
+openapi_specs/          # Drop your OpenAPI YAML/JSON specs here
+```
 
 ```
 MCP_API/
@@ -422,7 +445,7 @@ MCP_API/
 └── tests/ (future)            # Placeholder for test suite
 ```
 
-## 🧪 Testing
+## 🧪 Quick Smoke
 
 ### Quick Demo
 ```bash
@@ -469,7 +492,8 @@ Enable debug logging:
 logging.basicConfig(level=logging.DEBUG)
 ```
 
-## 📚 Documentation
+## 📚 Notes
+Removed legacy scripts: `mcp_client.py`, `mcp_server*.py`, `openapi.py`, demos.
 
 - [Setup Guide](setup_guide.md): Comprehensive setup and usage guide
 <!-- Legacy example script removed during cleanup -->
@@ -496,7 +520,7 @@ For support and questions:
 3. Use start_demo.py or direct scripts
 4. Check server logs for errors
 
-## 🔮 Roadmap
+## 🔮 Roadmap (Lean)
 
 - [ ] Enhanced NLP for better query understanding
 - [ ] Response caching for improved performance
@@ -515,7 +539,8 @@ For support and questions:
 
 ---
 
-## 🖥️ React Frontend (MCP Console UI)
+## 🖥️ Simple React UI
+We replaced the complex console with a minimal chat (`SimpleChatApp`). Switch back by editing `frontend/src/main.tsx` to render the old `App` component if still desired.
 
 If you see only `Loading application…` at `http://localhost:8080`, you're viewing the backend placeholder. Run the dev UI separately:
 

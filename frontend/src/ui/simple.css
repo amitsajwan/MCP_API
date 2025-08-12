@@ -1,0 +1,19 @@
+.simple-shell{--bg:#0d0f12;--panel:#161a1f;--accent:#2d5fff;--border:#252a31;--user:#0b3d66;--assistant:#173d1f;font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;background:var(--bg);color:#e7ecf3;display:flex;flex-direction:column;height:100vh;margin:0}
+.simple-header{padding:.85rem 1rem;background:var(--panel);font-weight:600;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+.controls{display:flex;gap:1rem;align-items:center;padding:.5rem 1rem;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap;font-size:.75rem}
+.controls input[type=number]{width:60px}
+.log{flex:1;overflow:auto;padding:1rem;font-size:.75rem;line-height:1.35}
+.line{margin:0 0 .9rem}
+.line .meta{font-size:.6rem;opacity:.55;text-transform:uppercase;margin-bottom:.2rem;letter-spacing:.5px}
+.bubble{margin:0;background:#1d232b;border:1px solid var(--border);padding:.6rem .75rem;border-radius:8px;white-space:pre-wrap;word-break:break-word;max-width:75ch}
+.line.user .bubble{background:var(--user);}
+.line.assistant .bubble{background:var(--assistant);}
+.input-row{display:flex;gap:.6rem;padding:.75rem 1rem;background:var(--panel);border-top:1px solid var(--border)}
+.input-row input{flex:1;padding:.6rem .7rem;background:#11161c;border:1px solid var(--border);border-radius:6px;color:inherit;font-size:.8rem}
+.input-row input:focus{outline:2px solid var(--accent)}
+.input-row button{background:var(--accent);border:1px solid var(--accent);color:#fff;padding:.6rem 1.1rem;border-radius:6px;font-weight:600;cursor:pointer}
+.input-row button:disabled{opacity:.6;cursor:progress}
+.error{color:#ff6666;font-size:.7rem;padding:0 .9rem}
+.foot{font-size:.6rem;opacity:.6;padding:.4rem 1rem;text-align:right;background:var(--panel);border-top:1px solid var(--border)}
+.mode-tag{font-size:.6rem;background:#23324b;padding:.25rem .5rem;border-radius:999px;margin-left:.65rem;vertical-align:middle;letter-spacing:.5px}
+::-webkit-scrollbar{width:10px}::-webkit-scrollbar-track{background:#101316}::-webkit-scrollbar-thumb{background:#2a3139;border-radius:6px}::-webkit-scrollbar-thumb:hover{background:#353e47}

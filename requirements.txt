@@ -7,3 +7,4 @@ pyyaml
 openapi-spec-validator
 python-dotenv
 fastmcp
+openai>=1.0.0 # optional: for LLM agent
