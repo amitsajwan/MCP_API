@@ -1,0 +1,16 @@
+openapi: 3.0.0
+info:
+  title: Example API
+  version: 1.0.0
+paths:
+  /example-path:
+    get:
+      summary: "Example GET Action"
+      description: "This is an example GET action."
+      x-quick-action: true
+      tags:
+        - example
+    post:
+      summary: "Example POST Action"
+      description: "This is an example POST action."
+      x-quick-action: false

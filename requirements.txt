@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+aiohttp
+requests
+pyyaml
+openapi-spec-validator
+python-dotenv
+fastmcp

@@ -1,0 +1,1 @@
+﻿regex:^sk-OLDLEAKEDKEY[a-zA-Z0-9]*==?==>REDACTED_OPENAI_KEY
