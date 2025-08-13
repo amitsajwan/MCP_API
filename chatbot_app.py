@@ -78,6 +78,7 @@ class AssistantResponse(BaseModel):
     session_id: str
     plan: Dict[str, Any]
     executions: Optional[Any] = None
+    answer: Optional[str] = None
 
 
 class ConfigurationRequest(BaseModel):
@@ -413,6 +414,44 @@ def _parse_inline_args(message: str) -> Dict[str, Any]:
                     args[k] = v
     return args
 
+def _synthesize_answer(executions: list) -> str:
+    if not executions:
+        return "No tool executions were performed."
+    lines = []
+    aggregate_counts = []
+    for ex in executions:
+        if ex.get('status') != 'success':
+            lines.append(f"{ex.get('tool')}: error {ex.get('error')}")
+            continue
+        res = ex.get('result')
+        # Standard FastAPI endpoint wrapper shape {status, url, status_code, response}
+        payload = res.get('response') if isinstance(res, dict) else res
+        count_info = None
+        # Try to locate primary list
+        if isinstance(payload, list):
+            count_info = (len(payload), 'items')
+        elif isinstance(payload, dict):
+            # pick the largest list value
+            best_key = None; best_len = -1
+            for k,v in payload.items():
+                if isinstance(v, list):
+                    l = len(v)
+                    if l > best_len:
+                        best_len = l; best_key = k
+            if best_key is not None:
+                count_info = (best_len, best_key)
+        if count_info:
+            n, label = count_info
+            aggregate_counts.append((ex.get('tool'), n, label))
+            lines.append(f"{ex.get('tool')}: {n} {label}")
+        else:
+            lines.append(f"{ex.get('tool')}: succeeded")
+    if not aggregate_counts:
+        return "; ".join(lines)
+    summary_parts = [f"{n} from {tool}" for tool, n, _ in aggregate_counts]
+    total = sum(n for _, n, _ in aggregate_counts)
+    return "; ".join(lines) + f". Total items across tools: {total} (" + ", ".join(summary_parts) + ")"
+
 @app.post('/assistant/chat', response_model=AssistantResponse)
 async def assistant_chat(req: AssistantRequest):
     """Assistant mode: attempt to map natural language to one or more tools and execute them.
@@ -457,7 +496,10 @@ async def assistant_chat(req: AssistantRequest):
         return AssistantResponse(message=req.message, session_id=session_id, plan=plan, executions=None)
 
     scored.sort(key=lambda x: x['score'], reverse=True)
-    selected = [c['tool'] for c in scored[: max(1, req.max_tools)]]
+    # Multi-tool heuristic: if user mentions 'all', 'both', 'summary' choose up to req.max_tools (default 1)
+    want_multi = any(t in message_tokens for t in {'all','both','summary'}) or req.max_tools > 1
+    limit = req.max_tools if want_multi else 1
+    selected = [c['tool'] for c in scored[: max(1, limit)]]
 
     # inline_args already parsed / augmented above
 
@@ -478,7 +520,8 @@ async def assistant_chat(req: AssistantRequest):
     }
     # Append assistant reply summary to history
     session['conversation_history'].append({'role': 'assistant', 'content': plan, 'timestamp': datetime.now().isoformat()})
-    return AssistantResponse(message=req.message, session_id=session_id, plan=plan, executions=executions)
+    answer = _synthesize_answer(executions) if executions else None
+    return AssistantResponse(message=req.message, session_id=session_id, plan=plan, executions=executions, answer=answer)
 
 
 @app.get("/status")

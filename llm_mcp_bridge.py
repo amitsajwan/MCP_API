@@ -13,12 +13,20 @@ allow a generic LLM orchestrator to call a single /llm/route endpoint with a JSO
 Extend this with auth (API keys / JWT) and rate limiting before production use.
 """
 from fastapi import APIRouter, HTTPException
+import logging
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import os
 from openapi_mcp_server import server  # reuse existing singleton
 
+logger = logging.getLogger("llm_mcp_bridge")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO)
+
 router = APIRouter(prefix="/llm", tags=["llm"])
+
+# Debug snapshot of last agent invocation
+LAST_LLM_DEBUG: dict | None = None
 
 class LLMToolCall(BaseModel):
     tool: str
@@ -107,14 +115,15 @@ def _basic_intent_parse(message: str, tool_names: List[str]) -> List[LLMPlanStep
 @router.post('/agent', response_model=LLMAgentResponse)
 def llm_agent(req: LLMAgentRequest):
     """Experimental agent endpoint.
-    If OPENAI_API_KEY is set, attempts a light planning call; otherwise uses rule-based fallback.
+    Uses OpenAI (if OPENAI_API_KEY present) to plan tool steps; falls back to rule-based heuristic.
     """
     try:
         tool_names = list(server.api_tools.keys())
-        plan: List[LLMPlanStep]
         executions: List[Dict[str, Any]] = []
         used_llm = False
         api_key = os.environ.get('OPENAI_API_KEY')
+        debug: dict = {"message": req.message, "api_key_present": bool(api_key), "used_llm": False, "error": None}
+
         if api_key:
             try:
                 from openai import OpenAI
@@ -133,9 +142,10 @@ def llm_agent(req: LLMAgentRequest):
                 import json as _json
                 try:
                     parsed = _json.loads(raw)
+                    debug["raw_excerpt"] = raw[:400]
                     if isinstance(parsed, dict):
                         parsed = [parsed]
-                    plan = []
+                    plan: List[LLMPlanStep] = []
                     for item in parsed:
                         t = item.get('tool')
                         if t in tool_names:
@@ -143,11 +153,18 @@ def llm_agent(req: LLMAgentRequest):
                     if not plan:
                         plan = _basic_intent_parse(req.message, tool_names)
                     used_llm = True
+                    logger.info("[LLM] planning succeeded: steps=%d", len(plan))
+                    debug["plan_len"] = len(plan)
                 except Exception:
+                    logger.warning("Failed to parse LLM response; falling back to rule-based planner.")
+                    debug["parse_error"] = True
                     plan = _basic_intent_parse(req.message, tool_names)
-            except Exception:
+            except Exception as e:
+                logger.warning("LLM planning error: %s -- falling back to rule-based", e)
+                debug["error"] = str(e)
                 plan = _basic_intent_parse(req.message, tool_names)
         else:
+            logger.info("No OPENAI_API_KEY present; using rule-based planning.")
             plan = _basic_intent_parse(req.message, tool_names)
 
         if not req.dry_run:
@@ -157,16 +174,30 @@ def llm_agent(req: LLMAgentRequest):
                     executions.append({'tool': step.tool, 'status': 'success', 'result': result})
                 except Exception as e:
                     executions.append({'tool': step.tool, 'status': 'error', 'error': str(e)})
-        return LLMAgentResponse(
-            status='success',
-            plan=plan,
-            executions=None if req.dry_run else executions,
-            notes='llm_plan' if used_llm else 'rule_based_plan'
-        )
+
+        note = 'llm_plan' if used_llm else 'rule_based_plan'
+        debug["used_llm"] = used_llm
+        debug["plan_tools"] = [s.tool for s in plan]
+        debug["note"] = note
+        if not req.dry_run:
+            debug["executions"] = [{"tool": e.get("tool"), "status": e.get("status")} for e in executions]
+        global LAST_LLM_DEBUG
+        LAST_LLM_DEBUG = debug
+        return LLMAgentResponse(status='success', plan=plan, executions=None if req.dry_run else executions, notes=note)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, str(e))
+
+@router.get('/status')
+def llm_status():
+    """Report whether the OpenAI API key is detected and a count of tools."""
+    api_key_present = bool(os.environ.get('OPENAI_API_KEY'))
+    return {
+        'openai_api_key_present': api_key_present,
+        'tool_count': len(server.api_tools),
+        'note': 'Set OPENAI_API_KEY before starting server to enable LLM planning.' if not api_key_present else 'LLM planning path available.'
+    }
 
 # To integrate, in openapi_mcp_server.py after FastAPI app definition:
 #   from llm_mcp_bridge import router as llm_router
