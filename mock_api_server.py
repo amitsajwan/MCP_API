@@ -137,12 +137,19 @@ def get_transactions(type: str | None = None):
 def cash_summary(date_range: str | None = None, include_pending: bool = True):
     pending = [p for p in payments_store.values() if p.status == "pending"]
     total_balance = transactions_store[-1].balance_after if transactions_store else 10000.0
+    payment_summary = {
+        "total_payments": len(payments_store),
+        "approved_payments": sum(1 for p in payments_store.values() if p.status == "approved"),
+        "rejected_payments": sum(1 for p in payments_store.values() if p.status == "rejected"),
+        "pending_payments": len(pending)
+    }
     return {
         "total_balance": total_balance,
         "currency": "USD",
         "pending_approvals": len(pending),
         "pending_amount": round(sum(p.amount for p in pending),2),
-        "recent_transactions": transactions_store[:5]
+        "recent_transactions": transactions_store[:5],
+        "payment_summary": payment_summary
     }
 
 if __name__ == "__main__":
