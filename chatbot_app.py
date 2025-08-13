@@ -19,12 +19,12 @@ import uvicorn
 import asyncio
 from dotenv import load_dotenv
 
-# Ensure .env variables (e.g., OPENAI_API_KEY) are loaded for this process
+# Ensure .env variables (e.g., GROQ_API_KEY) are loaded for this process
 load_dotenv()
-if os.environ.get('OPENAI_API_KEY'):
-    logging.getLogger('chatbot_app').info('OPENAI_API_KEY detected (LLM summaries enabled).')
+if os.environ.get('GROQ_API_KEY'):
+    logging.getLogger('chatbot_app').info('GROQ_API_KEY detected (LLM summaries enabled).')
 else:
-    logging.getLogger('chatbot_app').info('OPENAI_API_KEY not set for chatbot_app (will use fallback summaries).')
+    logging.getLogger('chatbot_app').info('GROQ_API_KEY not set for chatbot_app (will use fallback summaries).')
 
 from fastmcp_client import ChatbotFastMCPClient
 from assistant_core import synthesize_answer

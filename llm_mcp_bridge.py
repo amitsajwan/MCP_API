@@ -169,7 +169,7 @@ def _groq_chat(messages: List[Dict[str, str]], model: Optional[str] = None) -> s
     if not api_key:
         raise RuntimeError("GROQ_API_KEY is not set")
     client = Groq(api_key=api_key)
-    selected_model = model or os.environ.get('GROQ_MODEL') or 'llama3-8b-8192'
+    selected_model = model or os.environ.get('GROQ_MODEL') or 'llama-3.1-8b-instant'
     resp = client.chat.completions.create(model=selected_model, messages=messages, temperature=0)
     content = (resp.choices[0].message.content or '').strip()
     return content
@@ -328,7 +328,7 @@ def llm_agent(req: LLMAgentRequest):
 def llm_status():
     """Report Groq availability, selected model, and tool count."""
     groq_present = bool(os.environ.get('GROQ_API_KEY'))
-    model = os.environ.get('GROQ_MODEL') or 'llama3-8b-8192'
+    model = os.environ.get('GROQ_MODEL') or 'llama-3.1-8b-instant'
     return {
         'provider': 'groq',
         'groq_api_key_present': groq_present,
