@@ -265,6 +265,7 @@ load_openapi_spec(
 1. Minimal HTML: http://localhost:8080/simple
 2. Simple React Chat (launch dev server in `frontend/`)
 3. Programmatic: /mcp/tools, /mcp/tools/{tool}, /assistant/chat, /llm/agent
+ 4. Prompt templates: /mcp/prompts
 
 The project includes a modern web-based chatbot interface built with FastAPI that provides:
 
@@ -281,6 +282,8 @@ The project includes a modern web-based chatbot interface built with FastAPI tha
 - **API Documentation**: http://localhost:8080/docs
 - **Real-time Status**: Shows MCP server connection status
 - **Quick Actions**: One-click access to common queries
+ - **Prompt Bar**: Auto-fetched suggestions from /mcp/prompts (first 6 shown)
+ - **Login Panel**: Toggle in the React UI to POST credentials to /configure (stores per-session configuration)
 
 ### Example Queries
 Try these questions in the web interface:
@@ -289,6 +292,29 @@ Try these questions in the web interface:
 - "Are there any CLS settlements pending?"
 - "Do I have any unread messages?"
 - "Give me a summary of all financial activities"
+
+### Prompt Templates Endpoint
+The server now exposes a lightweight helper endpoint returning dynamic + core prompt suggestions:
+
+```bash
+curl http://localhost:8000/mcp/prompts | jq
+```
+
+Response shape:
+```json
+{
+   "prompts": [
+      {"title": "Pending Payments Summary", "prompt": "pending payments status=pending", "description": "Retrieve all pending payments."},
+      {"title": "Cash + Securities", "prompt": "cash summary and securities positions", "description": "Run multiple related tools."},
+      {"title": "cash_getPayments", "prompt": "cash_getPayments status=<value>", "description": "GET /payments ..."}
+   ]
+}
+```
+
+Frontend (SimpleChatApp) fetches this once on load and renders the first six as buttons you can click to prefill the input.
+
+### LLM Plan Button
+In Assistant mode, an extra "LLM Plan" button performs a dry-run call to `/llm/agent` (no execution) to show the reasoning / plan JSON before you run anything. Edit or submit the planned query afterward.
 
 ## 📖 Usage Examples
 

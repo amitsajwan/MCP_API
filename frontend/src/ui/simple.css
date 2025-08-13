@@ -16,4 +16,14 @@
 .error{color:#ff6666;font-size:.7rem;padding:0 .9rem}
 .foot{font-size:.6rem;opacity:.6;padding:.4rem 1rem;text-align:right;background:var(--panel);border-top:1px solid var(--border)}
 .mode-tag{font-size:.6rem;background:#23324b;padding:.25rem .5rem;border-radius:999px;margin-left:.65rem;vertical-align:middle;letter-spacing:.5px}
+ .prompt-bar{display:flex;flex-wrap:wrap;gap:.4rem;padding:.4rem .6rem;background:var(--panel);border-bottom:1px solid var(--border)}
+ .prompt-bar button{background:#223048;border:1px solid #34455b;color:#d8e4f1;font-size:.6rem;padding:.35rem .55rem;border-radius:5px;cursor:pointer}
+ .prompt-bar button:hover{background:#2b3d55}
+ .login-panel{background:var(--panel);border-bottom:1px solid var(--border);padding:.5rem 1rem;font-size:.65rem}
+ .login-panel form{display:flex;flex-direction:column;gap:.5rem}
+ .login-panel .row{display:flex;flex-wrap:wrap;gap:.6rem}
+ .login-panel label{display:flex;flex-direction:column;gap:.2rem;font-weight:500}
+ .login-panel input{background:#11161c;border:1px solid var(--border);padding:.35rem .5rem;border-radius:4px;color:inherit;font-size:.65rem;min-width:140px}
+ .login-panel button{background:var(--accent);border:1px solid var(--accent);padding:.45rem .8rem;border-radius:4px;color:#fff;font-size:.65rem;align-self:flex-start;cursor:pointer}
+ .login-status{font-size:.6rem;opacity:.75}
 ::-webkit-scrollbar{width:10px}::-webkit-scrollbar-track{background:#101316}::-webkit-scrollbar-thumb{background:#2a3139;border-radius:6px}::-webkit-scrollbar-thumb:hover{background:#353e47}

@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +19,13 @@ import uvicorn
 import asyncio
 
 from fastmcp_client import ChatbotFastMCPClient
+from assistant_core import (
+    tokenize,
+    parse_inline_args,
+    score_tool,
+    select_tools,
+    synthesize_answer,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chatbot_app")
@@ -381,38 +388,8 @@ async def chat_endpoint(req: ChatRequest):
     return ChatResponse(response=answer, session_id=session_id, timestamp=datetime.now().isoformat())
 
 
-def _score_tool(message_tokens: set, tool_name: str, description: str) -> tuple[float, set]:
-    """Very lightweight relevance score: token overlap across name/description."""
-    name_tokens = {t.lower() for t in tool_name.replace('_', ' ').split()}
-    desc_tokens = {t.lower() for t in (description or '').replace('_', ' ').split()}
-    all_tokens = name_tokens | desc_tokens
-    overlap = message_tokens & all_tokens
-    # heuristic: weight name matches slightly higher
-    score = 0.0
-    for tok in overlap:
-        score += (1.5 if tok in name_tokens else 1.0)
-    # normalize by log size to avoid bias toward long names
-    if all_tokens:
-        score = score / (len(all_tokens) ** 0.5)
-    return score, overlap
-
-def _parse_inline_args(message: str) -> Dict[str, Any]:
-    """Parse simple key=value pairs in the message (e.g., status=pending limit=5)."""
-    args: Dict[str, Any] = {}
-    for part in message.split():
-        if '=' in part:
-            k, v = part.split('=', 1)
-            k = k.strip().lower()
-            v = v.strip().strip(',')
-            # naive casting
-            if v.isdigit():
-                args[k] = int(v)
-            else:
-                try:
-                    args[k] = float(v)
-                except ValueError:
-                    args[k] = v
-    return args
+_score_tool = score_tool  # backwards compat alias if referenced elsewhere
+_parse_inline_args = parse_inline_args
 
 def _synthesize_answer(executions: list) -> str:
     if not executions:
@@ -472,19 +449,19 @@ async def assistant_chat(req: AssistantRequest):
     tool_objs = tools_list.get('tools', [])
 
     # Tokenize message + simple inference (pending -> status=pending if not already provided)
-    raw_tokens = [t.lower().strip(',.!?') for t in req.message.split() if t]
-    inline_args = _parse_inline_args(req.message)
+    raw_tokens = tokenize(req.message)
+    inline_args = parse_inline_args(req.message)
     if 'pending' in raw_tokens and 'status' not in inline_args:
         inline_args['status'] = 'pending'
-    message_tokens = set(raw_tokens)
+    message_tokens: Set[str] = set(raw_tokens)
 
     scored = []
     for t in tool_objs:
         name = t.get('name') if isinstance(t, dict) else str(t)
         desc = t.get('description', '') if isinstance(t, dict) else ''
-        score, overlap = _score_tool(message_tokens, name, desc)
+        score, overlap = score_tool(message_tokens, name, desc)
         if score > 0:
-            scored.append({'tool': name, 'score': round(score, 4), 'overlap': sorted(list(overlap))})
+            scored.append({'tool': name, 'score': round(score, 4), 'overlap': sorted(overlap)})
 
     # Fallback: if nothing matched, provide suggestions listing tools
     if not scored:
@@ -496,10 +473,7 @@ async def assistant_chat(req: AssistantRequest):
         return AssistantResponse(message=req.message, session_id=session_id, plan=plan, executions=None)
 
     scored.sort(key=lambda x: x['score'], reverse=True)
-    # Multi-tool heuristic: if user mentions 'all', 'both', 'summary' choose up to req.max_tools (default 1)
-    want_multi = any(t in message_tokens for t in {'all','both','summary'}) or req.max_tools > 1
-    limit = req.max_tools if want_multi else 1
-    selected = [c['tool'] for c in scored[: max(1, limit)]]
+    selected = select_tools(scored, req.max_tools, message_tokens)
 
     # inline_args already parsed / augmented above
 
@@ -520,7 +494,7 @@ async def assistant_chat(req: AssistantRequest):
     }
     # Append assistant reply summary to history
     session['conversation_history'].append({'role': 'assistant', 'content': plan, 'timestamp': datetime.now().isoformat()})
-    answer = _synthesize_answer(executions) if executions else None
+    answer = synthesize_answer(executions) if executions else None
     return AssistantResponse(message=req.message, session_id=session_id, plan=plan, executions=executions, answer=answer)
 
 

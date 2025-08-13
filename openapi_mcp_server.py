@@ -396,6 +396,26 @@ async def list_tools():
 async def list_endpoints():
     return {"endpoints": list(server.api_tools.keys())}
 
+@app.get("/mcp/prompts")
+async def mcp_prompts():
+    """Return simple prompt templates a client can show for quick starts."""
+    tools = list(server.api_tools.values())
+    examples = []
+    for t in tools[:10]:
+        param_keys = list(t.parameters.keys())[:2]
+        arg_hint = " ".join(f"{k}=<value>" for k in param_keys)
+        examples.append({
+            "title": t.summary or t.name,
+            "prompt": f"{t.name} {arg_hint}".strip(),
+            "description": (t.description or '')[:120]
+        })
+    core = [
+        {"title": "Pending Payments Summary", "prompt": "pending payments status=pending", "description": "Retrieve all pending payments."},
+        {"title": "List Specs", "prompt": "list specs", "description": "List loaded API specs."},
+        {"title": "Cash + Securities", "prompt": "cash summary and securities positions", "description": "Run multiple related tools."}
+    ]
+    return {"prompts": core + examples}
+
 @app.get("/mcp/tool_meta/{tool_name}")
 async def tool_meta(tool_name: str):
     # direct match

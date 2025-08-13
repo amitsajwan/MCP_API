@@ -38,6 +38,7 @@ export const api = {
     return jsonFetch('/assistant/chat', { method: 'POST', body: JSON.stringify(body) });
   },
   async getStatus() { return jsonFetch('/status'); },
+  async getMcpPrompts() { return jsonFetch('/mcp/prompts'); },
   async configure(credentials: {username:string; password:string; base_url:string; environment?:string; session_id?:string}) {
     return jsonFetch('/configure', { method: 'POST', body: JSON.stringify(credentials) });
   },

@@ -14,12 +14,21 @@ export const SimpleChatApp: React.FC = () => {
   const [assistantMode, setAssistantMode] = useState(true);
   const [maxTools, setMaxTools] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [prompts, setPrompts] = useState<{title:string;prompt:string;description?:string}[]>([]);
+  const [showLogin, setShowLogin] = useState(false);
+  const [loginData, setLoginData] = useState({username:'', password:'', base_url:'http://localhost:9001', environment:'DEV'});
+  const [loginStatus, setLoginStatus] = useState<string>('');
   const logRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(()=>{ if(logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [messages]);
+  useEffect(()=>{
+    api.getMcpPrompts()
+      .then(d=> setPrompts(d.prompts||[]))
+      .catch(()=>{});
+  },[]);
 
   const push = (role: ChatEntry['role'], content: string) => {
-    setMessages(m => [...m, { id: Math.random().toString(36).slice(2), role, content, ts: new Date().toISOString() }]);
+    setMessages((m: ChatEntry[]) => [...m, { id: Math.random().toString(36).slice(2), role, content, ts: new Date().toISOString() }]);
   };
 
   const send = async () => {
@@ -54,11 +63,42 @@ export const SimpleChatApp: React.FC = () => {
     <div className="simple-shell">
       <header className="simple-header">API Chatbot <span className="mode-tag">{assistantMode ? 'Assistant' : 'Direct'}</span></header>
       <div className="controls">
-        <label><input type='checkbox' checked={assistantMode} onChange={e=>setAssistantMode(e.target.checked)} /> Assistant Mode</label>
+  <label><input type='checkbox' checked={assistantMode} onChange={(e: React.ChangeEvent<HTMLInputElement>)=>setAssistantMode(e.target.checked)} /> Assistant Mode</label>
         {assistantMode && (
-          <label>Max Tools <input type='number' min={1} max={5} value={maxTools} onChange={e=>setMaxTools(Math.max(1, Math.min(5, parseInt(e.target.value)||1)))} /></label>
+          <label>Max Tools <input type='number' min={1} max={5} value={maxTools} onChange={(e: React.ChangeEvent<HTMLInputElement>)=>setMaxTools(Math.max(1, Math.min(5, parseInt(e.target.value)||1)))} /></label>
         )}
+  <button type='button' onClick={()=> setShowLogin((s: boolean)=>!s)} disabled={loading}>{showLogin ? 'Close Login' : 'Login'}</button>
         <button onClick={()=>window.location.reload()} disabled={loading}>Reset</button>
+        <button disabled={loading} onClick={async ()=>{
+          const base = input.trim() || 'pending payments summary';
+          push('user', `[LLM PLAN] ${base}`);
+          setLoading(true);
+          try {
+            const plan = await api.llmAgent(base, { maxSteps: 3, dryRun: true });
+            push('assistant', JSON.stringify(plan, null, 2));
+          } catch(e:any){
+            push('assistant', 'LLM plan error: ' + e.message);
+          } finally { setLoading(false);} 
+        }}>LLM Plan</button>
+      </div>
+      {showLogin && (
+        <div className="login-panel">
+          <form onSubmit={async e=>{e.preventDefault(); setLoading(true); setLoginStatus(''); try { const res = await api.configure({...loginData}); setLoginStatus('Saved'); push('assistant', 'Configuration stored.'); } catch(err:any){ setLoginStatus(err.message); push('assistant', 'Login error: '+ err.message);} finally { setLoading(false);} }}>
+            <div className="row">
+              <label>Username <input value={loginData.username} onChange={e=>setLoginData(d=>({...d, username:e.target.value}))} /></label>
+              <label>Password <input type='password' value={loginData.password} onChange={e=>setLoginData(d=>({...d, password:e.target.value}))} /></label>
+              <label>Base URL <input value={loginData.base_url} onChange={e=>setLoginData(d=>({...d, base_url:e.target.value}))} /></label>
+              <label>Env <input value={loginData.environment} onChange={e=>setLoginData(d=>({...d, environment:e.target.value}))} style={{width:'70px'}} /></label>
+              <button type='submit' disabled={loading || !loginData.username}>Save</button>
+            </div>
+            {loginStatus && <div className="login-status">{loginStatus}</div>}
+          </form>
+        </div>
+      )}
+      <div className="prompt-bar">
+        {prompts.slice(0,6).map((p: {title:string;prompt:string;description?:string})=> (
+          <button key={p.title} title={p.description} onClick={()=> setInput(p.prompt)}>{p.title}</button>
+        ))}
       </div>
       <div className="log" ref={logRef}>
         {messages.map(m => (
