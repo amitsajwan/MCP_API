@@ -67,6 +67,30 @@ Starts:
 - Chatbot FastAPI (port 8080)
 - (Optional) React dev UI if Node available
 
+### Mock-Only / No Real APIs
+If you lack real upstream endpoints, run entirely against the included mock:
+
+```powershell
+python start_demo.py --dev --with-mock
+```
+
+Or manual setup with env overrides:
+
+```powershell
+$env:FORCE_BASE_URL='http://localhost:9001'
+$env:MOCK_ALL='1'              # force every spec to use mock base
+$env:AUTO_MOCK_FALLBACK='1'    # retry failed external calls against mock
+python openapi_mcp_server.py --transport http
+python chatbot_app.py
+```
+
+Environment flags:
+- FORCE_BASE_URL or FORCE_BASE_URL_<SPEC>: Direct base URL override.
+- MOCK_ALL=1: Force every spec to localhost mock (uses MOCK_API_PORT or 9001).
+- AUTO_MOCK_FALLBACK=1: If a remote call fails, retry same path on mock.
+
+When fallback triggers, tool result includes `note: "auto-mock-fallback"`.
+
 ### Manual Startup
 
 1. **Start the MCP Server:**

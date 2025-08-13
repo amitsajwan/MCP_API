@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 # from openapi_spec_validator import validate_v3_spec, validate_v2_spec
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
@@ -168,10 +168,14 @@ class OpenAPIMCPServer:
                 # FORCE_BASE_URL overrides all specs. FORCE_BASE_URL_<SPECNAME_UPPER> overrides by spec.
                 override_global = os.getenv("FORCE_BASE_URL")
                 override_spec = os.getenv(f"FORCE_BASE_URL_{spec_name.upper()}")
+                mock_all = os.getenv("MOCK_ALL")
+                mock_base = os.getenv("MOCK_API_BASE_URL", "http://localhost:9001").rstrip('/')
                 if override_spec:
                     base_url = override_spec.rstrip('/'); logger.warning("Overriding base_url for %s -> %s", spec_name, base_url)
                 elif override_global:
                     base_url = override_global.rstrip('/'); logger.warning("Overriding base_url (global) for %s -> %s", spec_name, base_url)
+                elif mock_all:
+                    base_url = mock_base; logger.warning("MOCK_ALL active: base_url for %s -> %s", spec_name, base_url)
 
                 api_spec = APISpec(name=spec_name, spec=spec, base_url=base_url, file_path=file_path)
                 self.api_specs[spec_name] = api_spec
@@ -209,15 +213,46 @@ class OpenAPIMCPServer:
             elif location == "body":
                 body_data[name] = value
 
-        resp = session.request(tool.method, url, params=query_params, headers=header_params,
-                               json=body_data if body_data else None, verify=False)
+        auto_mock = bool(os.getenv('AUTO_MOCK_FALLBACK'))
+        mock_base = os.getenv('MOCK_API_BASE_URL', 'http://localhost:9001').rstrip('/')
+        attempted_fallback = False
+        try:
+            logger.info("[API CALL] %s %s params=%s headers=%s bodyKeys=%s", tool.method, url, list(query_params.keys()), list(header_params.keys()), list(body_data.keys()))
+            resp = session.request(tool.method, url, params=query_params, headers=header_params,
+                                   json=body_data if body_data else None, verify=False, timeout=15)
+        except Exception as e:  # network / DNS / TLS
+            hint = None
+            if 'api.company.com' in url and not os.getenv('FORCE_BASE_URL'):
+                hint = "Set $env:FORCE_BASE_URL='http://localhost:9001' (PowerShell) before starting or set AUTO_MOCK_FALLBACK=1 for auto retry."
+            # Optional automatic fallback
+            if auto_mock and 'api.company.com' in url:
+                attempted_fallback = True
+                original = spec.base_url
+                spec.base_url = mock_base
+                new_url = f"{spec.base_url.rstrip('/')}{tool.path}"
+                try:
+                    logger.info("[API CALL:FALLBACK] %s %s", tool.method, new_url)
+                    resp = session.request(tool.method, new_url, params=query_params, headers=header_params,
+                                           json=body_data if body_data else None, verify=False, timeout=15)
+                except Exception as e2:
+                    return {"status": "error", "url": url, "message": f"Connection failed (and fallback failed): {e2}", "hint": hint}
+            else:
+                return {"status": "error", "url": url, "message": f"Connection failed: {e}", "hint": hint}
 
         try:
             data = resp.json()
         except Exception:
             data = {"text": resp.text}
-
-        return {"status": "success", "url": resp.url, "status_code": resp.status_code, "response": data}
+        result = {"status": "success", "url": resp.url, "status_code": resp.status_code, "response": data}
+        try:
+            preview = data if isinstance(data, (str, list)) else (list(data.keys()) if isinstance(data, dict) else str(type(data)))
+            logger.info("[API RESP] %s -> %s keys=%s", resp.url, resp.status_code, preview if isinstance(preview, list) else None)
+        except Exception:
+            pass
+        if attempted_fallback:
+            result["note"] = "auto-mock-fallback"
+            result["base_url"] = spec.base_url
+        return result
 
     def _register_core_tools(self):
         # internal reusable login logic (not decorated) so HTTP route can call real callable
@@ -363,6 +398,18 @@ class OpenAPIMCPServer:
 
 # ---------------------- FastAPI Introspection ----------------------
 app = FastAPI(title="OpenAPI MCP Server")
+
+# Structured access logging middleware
+@app.middleware("http")
+async def access_log(request: Request, call_next):
+    logger.info("HTTP %s %s", request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        logger.exception("Request failed: %s %s -> %s", request.method, request.url.path, e)
+        raise
+    logger.info("HTTP %s %s -> %s", request.method, request.url.path, getattr(response, 'status_code', '?'))
+    return response
 OPENAPI_DIR = os.getenv("OPENAPI_DIR", "./openapi_specs")
 server = OpenAPIMCPServer(openapi_dir=OPENAPI_DIR)
 
@@ -370,9 +417,14 @@ server = OpenAPIMCPServer(openapi_dir=OPENAPI_DIR)
 try:
     from llm_mcp_bridge import router as llm_router
     app.include_router(llm_router)
-    logger.info("LLM bridge router mounted at /llm/route")
+    # Probe openapi for mounted llm paths for clarity
+    try:
+        llm_paths = [p for p in app.openapi().get('paths', {}).keys() if str(p).startswith('/llm/')]
+        logger.info("LLM bridge router mounted: %d routes under /llm/", len(llm_paths))
+    except Exception:
+        logger.info("LLM bridge router mounted at /llm (OpenAPI inspection skipped)")
 except Exception as _e:  # noqa
-    logger.debug("LLM bridge not loaded: %s", _e)
+    logger.warning("LLM bridge not loaded: %s", _e)
 
 @app.get("/mcp/tools")
 async def list_tools():
@@ -447,6 +499,7 @@ async def tool_meta(tool_name: str):
 @app.post("/mcp/tools/{tool_name}")
 async def call_tool(tool_name: str, body: dict):
     args = body.get("arguments", {}) if body else {}
+    logger.info("/mcp/tools call -> %s args=%s", tool_name, args)
     # explicit handling for core login tool via internal callable
     if tool_name == "login" and hasattr(server, "_core_login"):
         try:
@@ -457,7 +510,9 @@ async def call_tool(tool_name: str, body: dict):
 
     # direct dynamic tool name
     if tool_name in server.api_tools:
-        return server.execute_endpoint(tool_name, args)
+        result = server.execute_endpoint(tool_name, args)
+        logger.info("/mcp/tools result <- %s status=%s code=%s", tool_name, result.get('status'), result.get('status_code'))
+        return result
 
     # allow alias without spec prefix e.g. 'get_banks' matching 'cash_api_get_banks'
     dynamic_match = None
@@ -466,7 +521,9 @@ async def call_tool(tool_name: str, body: dict):
             dynamic_match = name
             break
     if dynamic_match:
-        return server.execute_endpoint(dynamic_match, args)
+        result = server.execute_endpoint(dynamic_match, args)
+        logger.info("/mcp/tools result <- %s status=%s code=%s", dynamic_match, result.get('status'), result.get('status_code'))
+        return result
 
     # core MCP tool
     if tool_name in server.mcp.tools:
@@ -475,7 +532,9 @@ async def call_tool(tool_name: str, body: dict):
             result = tool_fn(**args)
         except TypeError as te:
             raise HTTPException(status_code=400, detail=f"Argument error: {te}")
-        return result if isinstance(result, dict) else {"result": result}
+    out = result if isinstance(result, dict) else {"result": result}
+    logger.info("/mcp/tools core result <- %s keys=%s", tool_name, list(out.keys()))
+    return out
 
     raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found.")
 
@@ -523,6 +582,7 @@ if __name__ == "__main__":
         # Serve FastAPI app (introspection + tool execution endpoints)
         import uvicorn
         logger.info("Starting FastAPI HTTP server on http://%s:%d", args.host, args.port)
-        uvicorn.run("openapi_mcp_server:app", host=args.host, port=args.port, reload=False)
+        # Pass the app instance directly to avoid module re-import and double initialization
+        uvicorn.run(app, host=args.host, port=args.port, reload=False)
     else:
         server.run(transport=args.transport, host=args.host, port=args.port)

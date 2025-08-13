@@ -1,5 +1,5 @@
 """Assistant core utilities (scoring, parsing, selection, synthesis).
-Kept deliberately small & dependency-free.
+Groq-only summarization with a simple fallback; no OpenAI/HF dependencies.
 """
 from __future__ import annotations
 from typing import Dict, Any, List, Tuple, Set
@@ -42,35 +42,66 @@ def select_tools(scored: List[Dict[str, Any]], max_tools: int, message_tokens: S
     return [c['tool'] for c in scored[: max(1, limit)]]
 
 def synthesize_answer(executions: List[Dict[str, Any]]) -> str:
+    """Summarize tool executions using Groq (if configured) or a concise heuristic fallback.
+
+    Env vars:
+        GROQ_API_KEY   - required to enable Groq summaries
+        GROQ_MODEL     - optional, default 'llama-3.1-8b-instant'
+    """
     if not executions:
         return "No tool executions were performed."
-    lines = []
-    aggregate = []
+
+    import os, json as _json, requests
+
+    tool_blocks: List[str] = []
+    fallback_lines: List[str] = []
     for ex in executions:
-        tool = ex.get('tool')
+        tool_name = ex.get('tool')
         if ex.get('status') != 'success':
-            lines.append(f"{tool}: error {ex.get('error')}")
+            err = ex.get('error') or 'unknown error'
+            hint = ex.get('hint')
+            fallback_lines.append(f"{tool_name}: error {err}{(' (hint: '+hint+')') if hint else ''}")
+            tool_blocks.append(f"Tool {tool_name} ERROR: {err}")
             continue
-        res = ex.get('result')
-        payload = res.get('response') if isinstance(res, dict) else res
-        count = None
-        if isinstance(payload, list):
-            count = (len(payload), 'items')
-        elif isinstance(payload, dict):
-            best_key, best_len = None, -1
-            for k,v in payload.items():
-                if isinstance(v, list) and len(v) > best_len:
-                    best_key, best_len = k, len(v)
-            if best_key is not None:
-                count = (best_len, best_key)
-        if count:
-            n, label = count
-            aggregate.append((tool, n))
-            lines.append(f"{tool}: {n} {label}")
-        else:
-            lines.append(f"{tool}: succeeded")
-    if not aggregate:
-        return "; ".join(lines)
-    total = sum(n for _, n in aggregate)
-    parts = [f"{n} from {t}" for t, n in aggregate]
-    return "; ".join(lines) + f". Total items: {total} (" + ", ".join(parts) + ")"
+        result = ex.get('result')
+        payload = result.get('response') if isinstance(result, dict) else result
+        try:
+            serialized = _json.dumps(payload, ensure_ascii=False)[:4000]
+        except Exception:
+            serialized = str(payload)[:4000]
+        fallback_lines.append(f"{tool_name}: success")
+        tool_blocks.append(f"Tool {tool_name} OUTPUT: {serialized}")
+
+    prompt = (
+        "You are an assistant summarizing financial API tool results. "
+        "Produce a concise (<=120 words) factual summary highlighting balances, counts, statuses, totals. "
+        "Do not invent fields. Merge overlapping info.\n\n" + "\n\n".join(tool_blocks)
+    )
+    # Groq path (OpenAI-compatible Chat Completions API)
+    groq_key = os.environ.get('GROQ_API_KEY')
+    if not groq_key:
+        return "\n".join(fallback_lines)
+    model = os.environ.get('GROQ_MODEL', 'llama-3.1-8b-instant')
+    url = 'https://api.groq.com/openai/v1/chat/completions'
+    headers = {
+        'Authorization': f'Bearer {groq_key}',
+        'Content-Type': 'application/json'
+    }
+    body = {
+        'model': model,
+        'messages': [
+            {"role": "system", "content": "You convert raw JSON tool outputs into a factual concise summary."},
+            {"role": "user", "content": prompt}
+        ],
+        'temperature': 0.2,
+        'max_tokens': 300
+    }
+    try:
+        r = requests.post(url, headers=headers, json=body, timeout=60)
+        if r.status_code != 200:
+            return "\n".join(fallback_lines + [f"(Groq summarization error {r.status_code})"])
+        data = r.json()
+        text = (data.get('choices') or [{}])[0].get('message', {}).get('content', '').strip()
+        return text or "\n".join(fallback_lines)
+    except Exception:
+        return "\n".join(fallback_lines)
