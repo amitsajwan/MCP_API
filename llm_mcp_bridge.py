@@ -199,6 +199,12 @@ def llm_status():
         'note': 'Set OPENAI_API_KEY before starting server to enable LLM planning.' if not api_key_present else 'LLM planning path available.'
     }
 
+@router.get('/debug')
+def llm_debug():
+    """Return the last LLM agent debug snapshot (or placeholder if none)."""
+    global LAST_LLM_DEBUG
+    return LAST_LLM_DEBUG or {"status": "no_invocation"}
+
 # To integrate, in openapi_mcp_server.py after FastAPI app definition:
 #   from llm_mcp_bridge import router as llm_router
 #   app.include_router(llm_router)
