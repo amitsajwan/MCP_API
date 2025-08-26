@@ -17,7 +17,7 @@ import logging
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import os
-from openapi_mcp_server import server  # reuse existing singleton
+# from openapi_mcp_server import server  # reuse existing singleton
 
 logger = logging.getLogger("llm_mcp_bridge")
 if not logger.handlers:
@@ -59,6 +59,7 @@ class LLMAgentResponse(BaseModel):
     arguments: Optional[Dict[str, Dict[str, Any]]] = None
     executed: Optional[bool] = None
     results: Optional[Dict[str, Any]] = None
+    answer: Optional[str] = None
 
 def _get_value_at_path(obj: Any, path: str) -> Any:
     """Walk obj by dot-path; supports dict keys and list indices."""
@@ -174,8 +175,49 @@ def _groq_chat(messages: List[Dict[str, str]], model: Optional[str] = None) -> s
     content = (resp.choices[0].message.content or '').strip()
     return content
 
+def _summarize_executions_with_groq(executions: List[Dict[str, Any]], model: Optional[str] = None) -> Optional[str]:
+    """Summarize tool executions with a concise, generic financial helper prompt. Returns None if Groq unavailable."""
+    import os, json as _json
+    if not executions:
+        return None
+    api_key = os.environ.get('GROQ_API_KEY')
+    if not api_key:
+        return None
+    tool_blocks: List[str] = []
+    for ex in executions:
+        t = ex.get('tool'); status = ex.get('status')
+        if str(t).lower() in {"login","set_session_cookie","clear_session_cookie"}:
+            continue
+        if status != 'success':
+            err = ex.get('error') or 'unknown error'
+            tool_blocks.append(f"Tool {t} ERROR: {err}")
+        else:
+            res = ex.get('result'); payload = res.get('response') if isinstance(res, dict) else res
+            try:
+                serialized = _json.dumps(payload, ensure_ascii=False)[:4000]
+            except Exception:
+                serialized = str(payload)[:4000]
+            tool_blocks.append(f"Tool {t} OUTPUT: {serialized}")
+    if not tool_blocks:
+        return None
+    sys = "You are a financial APIs assistant. Use only the provided tool outputs to answer the user's request concisely and factually."
+    usr = (
+        "You are a financial APIs helper. Summarize the tool results concisely (<=120 words), "
+        "answering the user's request based only on these outputs. Do not invent fields or facts. "
+        "Prefer balances, counts, statuses, totals if present. If outputs are heterogeneous, provide a short, factual synthesis.\n\n"
+        + "\n\n".join(tool_blocks)
+    )
+    try:
+        return _groq_chat([
+            {"role": "system", "content": sys},
+            {"role": "user", "content": usr}
+        ], model=model)
+    except Exception:
+        return None
+
 @router.post("/route")
 def llm_route(body: LLMRouteRequest):
+    from openapi_mcp_server import server
     logger.info("/llm/route called message_empty=%s call=%s", not bool(body.message), bool(body.call))
     # If explicit tool call provided, execute directly
     if body.call:
@@ -238,36 +280,118 @@ def _basic_intent_parse(message: str, tool_names: List[str]) -> List[LLMPlanStep
     # Return all matched steps in order; caller will cap to max_steps
     return steps
 
+def _generate_plan_summary(plan: List[LLMPlanStep], user_message: str) -> str:
+    """Generate a human-readable summary of the execution plan."""
+    if not plan:
+        return "No execution steps planned."
+    
+    summary_parts = [f"**Execution Plan for:** {user_message}\n"]
+    
+    for i, step in enumerate(plan, 1):
+        tool_name = step.tool.replace('cash_api_', '').replace('_', ' ').title()
+        reason = step.reason or f"Execute {tool_name}"
+        args_str = ""
+        if step.arguments:
+            key_args = [f"{k}={v}" for k, v in step.arguments.items() if v]
+            if key_args:
+                args_str = f" (with {', '.join(key_args)})"
+        
+        summary_parts.append(f"**Step {i}:** {reason}{args_str}")
+        summary_parts.append(f"   - API Call: `{step.tool}`")
+        if step.arguments:
+            summary_parts.append(f"   - Parameters: {step.arguments}")
+        summary_parts.append("")
+    
+    summary_parts.append("**Expected Flow:**")
+    if len(plan) == 1:
+        summary_parts.append("- Single API call to retrieve requested data")
+    else:
+        summary_parts.append("- Sequential execution with data chaining between steps")
+        summary_parts.append("- Each step builds upon previous results")
+    
+    return "\n".join(summary_parts)
+
+class LLMPlanRequest(BaseModel):
+    message: str
+    max_steps: int = 3
+    model: Optional[str] = None
+
+class LLMPlanResponse(BaseModel):
+    status: str
+    plan: List[LLMPlanStep]
+    plan_summary: str
+    estimated_execution_time: Optional[str] = None
+    data_sources: List[str] = []
+    expected_outputs: List[str] = []
+    notes: Optional[str] = None
+
 @router.post('/agent', response_model=LLMAgentResponse)
 def llm_agent(req: LLMAgentRequest):
+    from openapi_mcp_server import server
     """Experimental agent endpoint using Groq only for planning (fallback to rule-based)."""
     try:
         tool_names = list(server.api_tools.keys())
+        if not tool_names:
+            return LLMAgentResponse(
+                status='success',
+                plan=[],
+                notes='no_tools_available',
+                answer='No tools are currently available. Please check if OpenAPI specs are loaded.'
+            )
+            
         executions: List[Dict[str, Any]] = []
         used_llm = False
-        debug: dict = {"message": req.message, "provider": "groq", "used_llm": False, "error": None}
+        debug: dict = {"message": str(req.message), "provider": "groq", "used_llm": False, "error": None}
+
+        # Build a compact tool catalog (name, description, parameters)
+        catalog_lines: List[str] = []
+        for name in tool_names:
+            t = server.api_tools.get(name)
+            if not t:
+                continue
+            params = []
+            for p, info in (t.parameters or {}).items():
+                req_param = 'required' if info.get('required') else 'optional'
+                ptype = info.get('type') or 'string'
+                params.append(f"{p}:{ptype}({req_param})")
+            ptxt = ", ".join(params)
+            desc = (t.summary or t.description or '').strip()
+            catalog_lines.append(f"- {name}: {desc}{(' | params: '+ptxt) if ptxt else ''}")
+        tool_catalog = "\n".join(catalog_lines)
 
         system_prompt = (
-            "You are a tool planner. Given user request and tool list, respond with JSON array of steps. "
-            "Each step: {tool, arguments, reason}. Only include tools that exist. Keep arguments simple. "
-            "If a later step needs a value from an earlier step, set the argument to a placeholder like "
-            "${TOOL.key.path} where TOOL is the earlier tool name and key.path navigates its JSON."
+            "You are a financial APIs assistant and tool planner.\n"
+            "Goal: solve the user's request by selecting and ordering tool calls.\n"
+            "Output a JSON array of steps. Each step: {tool, arguments, reason}.\n"
+            "Rules:\n"
+            "- Use only the listed tools. Prefer minimal steps (<= max_steps).\n"
+            "- Fill arguments from the user's message; if a value depends on earlier output, use a placeholder ${TOOL.key.path}.\n"
+            "- If authentication is needed, include a 'login' step first (with placeholders if credentials are unknown), or use 'set_session_cookie' if a JSESSIONID is available.\n"
+            "- Do not invent fields or tools. If critical required fields are missing, proceed with placeholders and explain in 'reason'.\n"
+            "- Keep arguments simple (strings/numbers/booleans)."
         )
-        tool_list_text = "\n".join(tool_names)
         content = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Tools:\n{tool_list_text}\n\nUser: {req.message}"}
+            {"role": "user", "content": f"Available tools:\n{tool_catalog}\n\nUser request: {req.message}\nReturn: JSON array of steps."}
         ]
 
         try:
+            # Check if GROQ_API_KEY is available
+            import os
+            if not os.environ.get('GROQ_API_KEY'):
+                logger.warning("GROQ_API_KEY not set, falling back to rule-based parsing")
+                raise RuntimeError("GROQ_API_KEY not configured")
+                
             raw = _groq_chat(content, model=req.model)
             parsed = _extract_json_payload(raw)
             if isinstance(parsed, dict):
                 parsed = [parsed]
             plan: List[LLMPlanStep] = []
             for item in parsed:
+                if not isinstance(item, dict):
+                    continue
                 t = item.get('tool')
-                if t in tool_names:
+                if t and t in tool_names:
                     args = _coerce_args_to_dict(item.get('arguments', {}))
                     plan.append(LLMPlanStep(tool=t, arguments=args, reason=item.get('reason')))
             if not plan:
@@ -278,7 +402,11 @@ def llm_agent(req: LLMAgentRequest):
         except Exception as e:
             logger.warning("Groq planning error: %s -- falling back to rule-based", e)
             debug["error"] = str(e)
-            plan = _basic_intent_parse(req.message, tool_names)
+            try:
+                plan = _basic_intent_parse(req.message, tool_names)
+            except Exception as fallback_error:
+                logger.error("Fallback rule-based parsing failed: %s", fallback_error)
+                raise HTTPException(500, f"Both LLM and rule-based parsing failed: {fallback_error}")
 
         selected = [s.tool for s in plan]
         argmap: Dict[str, Dict[str, Any]] = {s.tool: s.arguments for s in plan}
@@ -289,7 +417,16 @@ def llm_agent(req: LLMAgentRequest):
                 try:
                     # Resolve placeholders from previously collected results_map
                     resolved_args = _resolve_placeholders(step.arguments or {}, results_map)
-                    result = server.execute_endpoint(step.tool, resolved_args)
+                    # Handle core tools explicitly; else execute API endpoint tool
+                    if step.tool == 'login' and hasattr(server, '_core_login'):
+                        result = server._core_login(**resolved_args)
+                    elif step.tool == 'set_session_cookie' and hasattr(server, '_core_set_session'):
+                        # expects jsessionid and optional spec_name
+                        result = server._core_set_session(resolved_args.get('spec_name'), resolved_args.get('jsessionid'))
+                    elif step.tool == 'clear_session_cookie' and hasattr(server, '_core_clear_session'):
+                        result = server._core_clear_session(resolved_args.get('spec_name'))
+                    else:
+                        result = server.execute_endpoint(step.tool, resolved_args)
                     executions.append({'tool': step.tool, 'status': 'success', 'result': result})
                     if isinstance(result, dict) and 'response' in result:
                         results_map[step.tool] = result['response']
@@ -298,6 +435,10 @@ def llm_agent(req: LLMAgentRequest):
                 except Exception as e:
                     executions.append({'tool': step.tool, 'status': 'error', 'error': str(e)})
                     results_map[step.tool] = {'status': 'error', 'error': str(e)}
+        # Optional final answer via Groq summarization
+        answer_text: Optional[str] = None
+        if not req.dry_run:
+            answer_text = _summarize_executions_with_groq(executions, model=req.model)
 
         note = 'llm_plan' if used_llm else 'rule_based_plan'
         debug["used_llm"] = used_llm
@@ -318,6 +459,7 @@ def llm_agent(req: LLMAgentRequest):
             arguments=argmap,
             executed=(not req.dry_run),
             results=None if req.dry_run else results_map,
+            answer=answer_text,
         )
     except HTTPException:
         raise

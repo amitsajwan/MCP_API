@@ -25,10 +25,10 @@ $env:FORCE_BASE_URL='http://localhost:9001'
 python mock_api_server.py   # in a separate terminal (port 9001)
 
 # MCP HTTP server
-python openapi_mcp_server.py --transport http   # http://127.0.0.1:8000
+python openapi_mcp_server.py --transport http   # http://127.0.0.1:9000
 
 # Chatbot UI/API
-python chatbot_app.py                           # http://127.0.0.1:8080
+python chatbot_app.py                           # http://127.0.0.1:9080
 ```
 
 Environment
@@ -44,9 +44,8 @@ Endpoints
 - GET  /mcp/tool_meta/{tool}          tool params
 - POST /mcp/tools/{tool}              execute tool (body: {"arguments": {...}})
 - GET  /mcp/prompts                   quick prompt suggestions
-- GET  /llm/status                    groq availability/model
-- POST /llm/agent                     agentic plan+execute ({"message","max_steps","dry_run"})
-- POST /assistant/chat                UI-friendly plan+execute + NL summary
+// LLM endpoints removed in tools-only mode; client should plan and chain.
+- POST /assistant/chat                UI-friendly agentic execution with NL summary
 
 Multi-step + simple chaining
 - The agent may return multiple steps; they execute sequentially up to max_steps.
@@ -64,6 +63,7 @@ Troubleshooting
 Notes
 - OpenAI/HuggingFace planning removed; Groq-only to keep it simple and reliable.
 - Older guides were removed to avoid duplication; this README is the source of truth.
+ - Client-side planning and chaining is the default. Server is tools-only.
 
 <!-- Parallel execution is not implemented in this edition; sequential multi-step only. -->
 
@@ -166,8 +166,8 @@ python chatbot_app.py
 ### Manual Testing
 1. Start MCP server: `python openapi_mcp_server.py --transport http`
 2. Start chatbot: `python chatbot_app.py`
-3. Open http://localhost:8080
-4. Use the React UI (dev: http://localhost:5173 or http://localhost:5174) or call /chat
+3. Open http://localhost:9080
+4. Use the React UI (dev: http://localhost:9517 or http://localhost:9518) or call /chat
 
 ## 🐛 Troubleshooting
 
@@ -244,7 +244,7 @@ For support and questions:
 ## 🖥️ Simple React UI
 We replaced the complex console with a minimal chat (`SimpleChatApp`). Switch back by editing `frontend/src/main.tsx` to render the old `App` component if still desired.
 
-If you see only `Loading application…` at `http://localhost:8080`, you're viewing the backend placeholder. Run the dev UI separately:
+If you see only `Loading application…` at `http://localhost:9080`, you're viewing the backend placeholder. Run the dev UI separately:
 
 ### Dev Mode
 ```powershell
@@ -252,9 +252,9 @@ cd frontend
 npm install   # first time
 npm run dev
 ```
-Open the Vite URL (default http://localhost:5173).
+Open the Vite URL (default http://localhost:9517).
 
-The UI will call the backend at http://localhost:8080 for:
+The UI will call the backend at http://localhost:9080 for:
 - /status
 - /tools
 - /quick_actions
@@ -267,7 +267,7 @@ The UI will call the backend at http://localhost:8080 for:
 cd frontend
 npm run build
 ```
-Restart `python chatbot_app.py` and visit: http://localhost:8080/app/
+Restart `python chatbot_app.py` and visit: http://localhost:9080/app/
 
 ### Change Backend URL
 Edit `frontend/src/util/api.ts` BASE_URL.
@@ -275,9 +275,9 @@ Edit `frontend/src/util/api.ts` BASE_URL.
 ### Common Symptoms
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Only placeholder text | Dev server not running | Run `npm run dev` and use port 5173 |
-| 404 /src/main.tsx on 8080 | Expecting Vite assets from backend | Use 5173 or build & visit /app/ |
-| Empty tool list | MCP server not on 8000 | Start `openapi_mcp_server.py --transport http` |
+| Only placeholder text | Dev server not running | Run `npm run dev` and use port 9517 |
+| 404 /src/main.tsx on 9080 | Expecting Vite assets from backend | Use 9517 or build & visit /app/ |
+| Empty tool list | MCP server not on 9000 | Start `openapi_mcp_server.py --transport http` |
 | CORS errors | Backend not restarted | Restart chatbot_app |
 
 ### Next Frontend Enhancements

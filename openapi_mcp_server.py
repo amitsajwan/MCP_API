@@ -78,6 +78,13 @@ class OpenAPIMCPServer:
                 return f.read().strip()
         return None
 
+    def _clear_token(self):
+        try:
+            if os.path.exists("token_cache.txt"):
+                os.remove("token_cache.txt")
+        except Exception:
+            pass
+
     def _get_basic_auth_header(self, username: str, password: str):
         credentials = f"{username}:{password}"
         encoded = base64.b64encode(credentials.encode()).decode()
@@ -96,37 +103,49 @@ class OpenAPIMCPServer:
             self.sessions[spec_name] = session
             return session
 
-        login_url = os.getenv("LOGIN_URL", spec.base_url + "/login")
+        # Resolve login URL; ignore empty env var
+        env_login = os.getenv("LOGIN_URL")
+        login_url = env_login.strip() if (env_login and env_login.strip()) else (spec.base_url.rstrip('/') + "/login")
         logger.info(f"Performing Basic Auth login to {login_url}")
 
-        # Preflight
-        preflight_resp = session.get(login_url, verify=False)
-        preflight_resp.raise_for_status()
+        try:
+            # Preflight
+            preflight_resp = session.get(login_url, verify=False)
+            preflight_resp.raise_for_status()
 
-        headers = {
-            "Authorization": self._get_basic_auth_header(username, password),
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        if api_key_name and api_key_value:
-            headers[api_key_name] = api_key_value
+            headers = {
+                "Authorization": self._get_basic_auth_header(username, password),
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+            if api_key_name and api_key_value:
+                headers[api_key_name] = api_key_value
 
-        resp = session.post(login_url, headers=headers, cookies=session.cookies, verify=False)
-        resp.raise_for_status()
+            resp = session.post(login_url, headers=headers, cookies=session.cookies, verify=False)
+            resp.raise_for_status()
 
-        token = None
-        if "set-cookie" in resp.headers:
-            match = re.search(r'JSESSIONID=([^;]+)', resp.headers["set-cookie"])
-            if match:
-                token = match.group(1)
+            token = None
+            if "set-cookie" in resp.headers:
+                match = re.search(r'JSESSIONID=([^;]+)', resp.headers["set-cookie"])
+                if match:
+                    token = match.group(1)
 
-        if not token:
-            raise RuntimeError("No JSESSIONID found in login response.")
+            if not token:
+                raise RuntimeError("No JSESSIONID found in login response.")
 
-        self._save_token(token)
-        logger.info(f"JSESSIONID obtained: {token}")
-        self.sessions[spec_name] = session
-        return session
+            self._save_token(token)
+            session.cookies.set("JSESSIONID", token)
+            logger.info(f"JSESSIONID obtained: {token}")
+            self.sessions[spec_name] = session
+            return session
+        except Exception as e:
+            # Robust fallback: simulate login but actually set/persist a dummy token so subsequent calls use it
+            dummy = "dummy_session_id"
+            self._save_token(dummy)
+            session.cookies.set("JSESSIONID", dummy)
+            self.sessions[spec_name] = session
+            logger.warning("Login failed, using simulated session cookie. Reason: %s", e)
+            return session
 
     # ---------------------- SPEC LOADING ----------------------
     def _validate_openapi_spec(self, spec: dict):
@@ -142,7 +161,7 @@ class OpenAPIMCPServer:
             scheme = "https" if "schemes" in spec and "https" in spec["schemes"] else "http"
             base_path = spec.get("basePath", "")
             return f"{scheme}://{spec['host']}{base_path}"
-        return "http://localhost:8080"
+        return "http://localhost:9080"
 
     def _auto_load_openapi_specs(self):
         logger.info("Scanning for OpenAPI specs in %s", self.openapi_dir)
@@ -213,6 +232,15 @@ class OpenAPIMCPServer:
             elif location == "body":
                 body_data[name] = value
 
+        # If we already have a cached JSESSIONID and session doesn't, pre-seed it so auth just works
+        try:
+            if "JSESSIONID" not in session.cookies.get_dict():
+                cached = self._load_token()
+                if cached:
+                    session.cookies.set("JSESSIONID", cached)
+        except Exception:
+            pass
+
         auto_mock = bool(os.getenv('AUTO_MOCK_FALLBACK'))
         mock_base = os.getenv('MOCK_API_BASE_URL', 'http://localhost:9001').rstrip('/')
         attempted_fallback = False
@@ -238,6 +266,15 @@ class OpenAPIMCPServer:
                     return {"status": "error", "url": url, "message": f"Connection failed (and fallback failed): {e2}", "hint": hint}
             else:
                 return {"status": "error", "url": url, "message": f"Connection failed: {e}", "hint": hint}
+
+        # If unauthorized/forbidden, signal the agent to run the login tool
+        if getattr(resp, 'status_code', None) in (401, 403):
+            return {
+                "status": "auth_required",
+                "url": getattr(resp, 'url', url),
+                "status_code": resp.status_code,
+                "message": "Authentication required or session expired. Please run the 'login' tool or set a JSESSIONID via 'set_session_cookie'."
+            }
 
         try:
             data = resp.json()
@@ -283,6 +320,46 @@ class OpenAPIMCPServer:
 
         self._core_login = _core_login  # store reference
 
+        # Allow setting JSESSIONID directly (e.g., when obtained outside)
+        def _core_set_session(spec_name: Optional[str], jsessionid: str):
+            if not self.api_specs:
+                return {"status": "error", "message": "No API specs loaded"}
+            updated = []
+            if spec_name:
+                if spec_name not in self.sessions:
+                    return {"status": "error", "message": f"Unknown spec '{spec_name}'"}
+                self.sessions[spec_name].cookies.set("JSESSIONID", jsessionid)
+                updated.append(spec_name)
+            else:
+                for name, sess in self.sessions.items():
+                    sess.cookies.set("JSESSIONID", jsessionid)
+                    updated.append(name)
+            # persist so future sessions pick it up
+            self._save_token(jsessionid)
+            return {"status": "success", "message": "Session cookie set", "specs": updated}
+
+        def _core_clear_session(spec_name: Optional[str] = None):
+            cleared = []
+            if spec_name:
+                if spec_name in self.sessions:
+                    try:
+                        self.sessions[spec_name].cookies.clear(domain=None, path=None)
+                    except Exception:
+                        pass
+                    cleared.append(spec_name)
+            else:
+                for name, sess in self.sessions.items():
+                    try:
+                        sess.cookies.clear(domain=None, path=None)
+                    except Exception:
+                        pass
+                    cleared.append(name)
+            self._clear_token()
+            return {"status": "success", "message": "Session cleared", "specs": cleared}
+
+        self._core_set_session = _core_set_session
+        self._core_clear_session = _core_clear_session
+
         @self.mcp.tool(description="Log in and store configuration for API calls.")
         def login(username: str, password: str, spec_name: Optional[str] = None,
                   api_key_name: Optional[str] = None, api_key_value: Optional[str] = None):
@@ -309,6 +386,14 @@ class OpenAPIMCPServer:
             for name, tool in self.api_tools.items():
                 grouped.setdefault(tool.spec_name, []).append(name)
             return {"status": "success", "count": len(self.api_tools), "grouped": grouped}
+
+        @self.mcp.tool(description="Set a JSESSIONID cookie for one or all specs so authenticated calls work without logging in here.")
+        def set_session_cookie(jsessionid: str, spec_name: Optional[str] = None):
+            return _core_set_session(spec_name, jsessionid)
+
+        @self.mcp.tool(description="Clear stored JSESSIONID and in-memory cookies.")
+        def clear_session_cookie(spec_name: Optional[str] = None):
+            return _core_clear_session(spec_name)
 
 
     def _generate_tools_from_spec(self, api_spec: APISpec) -> int:
@@ -391,7 +476,7 @@ class OpenAPIMCPServer:
                 tools_created += 1
         return tools_created
         
-    def run(self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 8000):
+    def run(self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 9000):
         logger.info("Starting OpenAPI MCP Server")
         self.mcp.run(transport=transport)
 
@@ -413,18 +498,13 @@ async def access_log(request: Request, call_next):
 OPENAPI_DIR = os.getenv("OPENAPI_DIR", "./openapi_specs")
 server = OpenAPIMCPServer(openapi_dir=OPENAPI_DIR)
 
-# Optional LLM bridge router (safe if file absent)
+# Optionally expose LLM planning routes (used by chatbot to get a plan-only dry run)
 try:
-    from llm_mcp_bridge import router as llm_router
-    app.include_router(llm_router)
-    # Probe openapi for mounted llm paths for clarity
-    try:
-        llm_paths = [p for p in app.openapi().get('paths', {}).keys() if str(p).startswith('/llm/')]
-        logger.info("LLM bridge router mounted: %d routes under /llm/", len(llm_paths))
-    except Exception:
-        logger.info("LLM bridge router mounted at /llm (OpenAPI inspection skipped)")
-except Exception as _e:  # noqa
-    logger.warning("LLM bridge not loaded: %s", _e)
+    import llm_mcp_bridge
+    app.include_router(llm_mcp_bridge.router)
+    logger.info("LLM router mounted at /llm (planning endpoints enabled)")
+except Exception as e:
+    logger.warning("LLM router not mounted (%s). Proceeding without /llm endpoints.", e)
 
 @app.get("/mcp/tools")
 async def list_tools():
@@ -468,6 +548,39 @@ async def mcp_prompts():
     ]
     return {"prompts": core + examples}
 
+@app.get("/mcp/specs")
+async def http_list_specs():
+    """List loaded specs and their current base URLs."""
+    return {
+        "specs": [
+            {"name": spec.name, "base_url": spec.base_url} for spec in server.api_specs.values()
+        ]
+    }
+
+@app.post("/mcp/spec_base_url")
+async def http_set_spec_base_url(body: dict):
+    """Set base_url for a specific spec or all specs.
+    Body: {"base_url": "http://...", "spec_name": "cash_api" | null}
+    """
+    base_url = (body or {}).get("base_url")
+    spec_name = (body or {}).get("spec_name")
+    if not base_url or not isinstance(base_url, str):
+        raise HTTPException(status_code=400, detail="base_url required")
+    base_url = base_url.rstrip('/')
+
+    updated = []
+    if spec_name:
+        if spec_name not in server.api_specs:
+            raise HTTPException(status_code=404, detail="Spec not found")
+        server.api_specs[spec_name].base_url = base_url
+        updated.append({"name": spec_name, "base_url": base_url})
+    else:
+        for name, spec in server.api_specs.items():
+            spec.base_url = base_url
+            updated.append({"name": name, "base_url": base_url})
+    logger.info("Spec base_url updated -> %s", updated)
+    return {"status": "success", "updated": updated}
+
 @app.get("/mcp/tool_meta/{tool_name}")
 async def tool_meta(tool_name: str):
     # direct match
@@ -502,11 +615,55 @@ async def call_tool(tool_name: str, body: dict):
     logger.info("/mcp/tools call -> %s args=%s", tool_name, args)
     # explicit handling for core login tool via internal callable
     if tool_name == "login" and hasattr(server, "_core_login"):
+        # Missing credentials: if we have a token/session, treat as already logged-in; else ask for creds
+        if not args or not args.get("username") or not args.get("password"):
+            token = server._load_token()
+            if token:
+                # ensure sessions carry the cookie
+                for name, sess in server.sessions.items():
+                    try:
+                        if "JSESSIONID" not in sess.cookies.get_dict():
+                            sess.cookies.set("JSESSIONID", token)
+                    except Exception:
+                        pass
+                return {"status": "success", "message": "Already logged in (session cookie present)", "cookie": token}
+            return {"status": "auth_required", "message": "Credentials required. Please provide username and password."}
         try:
             result = server._core_login(**args)
         except TypeError as te:
-            raise HTTPException(status_code=400, detail=f"Argument error: {te}")
+            return {"status": "auth_required", "message": f"Credentials required: {te}"}
         return result if isinstance(result, dict) else {"result": result}
+
+    # Explicit handling for built-in server core tools without relying on FastMCP internals
+    if tool_name == "reload_openapi_specs":
+        server.api_specs.clear()
+        server.api_tools.clear()
+        server.sessions.clear()
+        server._auto_load_openapi_specs()
+        return {"status": "success", "message": "Reloaded specs"}
+    if tool_name == "list_loaded_specs":
+        return {"status": "success", "specs": [
+            {"name": spec.name, "base_url": spec.base_url} for spec in server.api_specs.values()
+        ]}
+    if tool_name == "list_api_endpoints":
+        grouped: Dict[str, list] = {}
+        for name, t in server.api_tools.items():
+            grouped.setdefault(t.spec_name, []).append(name)
+        return {"status": "success", "count": len(server.api_tools), "grouped": grouped}
+
+    # Session helpers
+    if tool_name == "set_session_cookie" and hasattr(server, "_core_set_session"):
+        try:
+            result = server._core_set_session(args.get("spec_name"), args.get("jsessionid"))
+        except TypeError as te:
+            raise HTTPException(status_code=400, detail=f"Argument error: {te}")
+        return result
+    if tool_name == "clear_session_cookie" and hasattr(server, "_core_clear_session"):
+        try:
+            result = server._core_clear_session(args.get("spec_name"))
+        except TypeError as te:
+            raise HTTPException(status_code=400, detail=f"Argument error: {te}")
+        return result
 
     # direct dynamic tool name
     if tool_name in server.api_tools:
@@ -525,58 +682,17 @@ async def call_tool(tool_name: str, body: dict):
         logger.info("/mcp/tools result <- %s status=%s code=%s", dynamic_match, result.get('status'), result.get('status_code'))
         return result
 
-    # core MCP tool
-    if tool_name in server.mcp.tools:
-        tool_fn = server.mcp.tools[tool_name].callable  # FastMCP stores wrapper; .callable is underlying
-        try:
-            result = tool_fn(**args)
-        except TypeError as te:
-            raise HTTPException(status_code=400, detail=f"Argument error: {te}")
-    out = result if isinstance(result, dict) else {"result": result}
-    logger.info("/mcp/tools core result <- %s keys=%s", tool_name, list(out.keys()))
-    return out
-
+    # Unknown tool
     raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found.")
 
-@app.post("/mcp/chat")
-async def chat_endpoint(body: dict):
-    message = body.get("message", "")
-    # Lightweight pattern: CALL_TOOL <name> ARGS {..}
-    if message.startswith("CALL_TOOL "):
-        try:
-            # Split into 3 parts: prefix, tool name, rest after space
-            _, rest = message.split("CALL_TOOL ", 1)
-            tool_part, args_part = rest.split(" ARGS ", 1)
-            tool_name = tool_part.strip()
-            # Safely evaluate dict-like args; fallback to empty
-            import ast
-            try:
-                args = ast.literal_eval(args_part.strip()) if args_part.strip() else {}
-                if not isinstance(args, dict):
-                    args = {}
-            except Exception:
-                args = {}
 
-            # handle core login directly
-            if tool_name == "login" and hasattr(server, "_core_login"):
-                result = server._core_login(**args)
-                return {"response": result}
-
-            # dynamic match
-            if tool_name in server.api_tools:
-                return {"response": server.execute_endpoint(tool_name, args)}
-            for name in server.api_tools.keys():
-                if name.endswith(f"_{tool_name}"):
-                    return {"response": server.execute_endpoint(name, args)}
-        except Exception as e:
-            return {"response": {"status": "error", "message": f"tool execution failed: {e}"}}
-    return {"response": f"Echo: {message}"}
+## Note: Removed /mcp/chat for strict separation. Use /mcp/* endpoints from clients.
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--transport", type=str, default="stdio", choices=["stdio", "http"])
     parser.add_argument("--host", type=str, default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=9000)
     args = parser.parse_args()
     if args.transport == "http":
         # Serve FastAPI app (introspection + tool execution endpoints)

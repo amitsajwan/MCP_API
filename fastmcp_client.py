@@ -15,7 +15,7 @@ logger = logging.getLogger("fastmcp_client")
 
 
 class DirectHTTPMCPClient:
-    def __init__(self, server_url: str = "http://localhost:8000"):
+    def __init__(self, server_url: str = "http://localhost:9000"):
         self.server_url = server_url.rstrip("/")
         self._session: Optional[aiohttp.ClientSession] = None
         self.authenticated = False
@@ -133,15 +133,16 @@ class ChatbotFastMCPClient(DirectHTTPMCPClient):
     The client used by chatbot_app.py. Adds high level chat helpers expected by the app.
     """
 
-    def __init__(self, server_url: str = "http://localhost:8000"):
+    def __init__(self, server_url: str = "http://localhost:9000"):
         super().__init__(server_url)
         self.conversation_history: List[Dict[str, Any]] = []
 
     async def login(self) -> Dict[str, Any]:
-        if not self.username or not self.password or not self.base_url:
-            return {"status": "error", "message": "username/password/base_url required"}
+        if not self.username or not self.password:
+            return {"status": "error", "message": "username/password required"}
         try:
-            return await self.call_tool("login", username=self.username, password=self.password, base_url=self.base_url, environment=self.environment)
+            # Server login tool accepts: username, password, optional spec_name/api_key_*
+            return await self.call_tool("login", username=self.username, password=self.password)
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
@@ -186,6 +187,27 @@ class ChatbotFastMCPClient(DirectHTTPMCPClient):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    async def call_llm_agent(self, message: str, model: Optional[str] = None) -> dict:
+        """Call the /llm/agent endpoint on the MCP server.
+        If the configured server_url includes '/mcp', strip it for LLM routes which live at the root ('/llm/*').
+        """
+        await self._ensure_session()
+        payload = {'message': message}
+        if model:
+            payload['model'] = model
+        # Derive base without trailing '/mcp' for LLM routes
+        base_url = self.server_url.rstrip('/')
+        if base_url.endswith('/mcp'):
+            base_url = base_url[:-4]
+        try:
+            async with self._session.post(f"{base_url}/llm/agent", json=payload) as resp:
+                if resp.status != 200:
+                    detail = await resp.text()
+                    return {"status": "error", "message": f"HTTP {resp.status}: {detail}"}
+                return await resp.json()
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     # convenience
     def get_conversation_history(self):
         return list(self.conversation_history)
@@ -196,7 +218,7 @@ class ChatbotFastMCPClient(DirectHTTPMCPClient):
 
 # quick test runner (async)
 async def _test():
-    client = ChatbotFastMCPClient(server_url="http://localhost:8000")
+    client = ChatbotFastMCPClient(server_url="http://localhost:9000")
     ok = await client.health_check()
     print("server up:", ok)
     if ok:

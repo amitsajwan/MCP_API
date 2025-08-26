@@ -1,0 +1,228 @@
+
+<!DOCTYPE html>
+        <html lang='en'>
+        <head>
+            <meta charset='UTF-8'/>
+            <title>API Assistant (Simple)</title>
+            <style>
+                :root { color-scheme: dark; }
+                body { margin:0; font-family: system-ui,-apple-system,Segoe UI,Arial,sans-serif; background:#111; color:#eee; display:flex; flex-direction:column; height:100vh; }
+                header { padding:0.75rem 1rem; background:#181818; font-weight:600; letter-spacing:.5px; }
+                #log { flex:1; overflow:auto; padding:1rem; line-height:1.4; }
+                .msg { margin:0 0 .85rem; }
+                .msg.user { color:#9ad6ff; }
+                .msg.assistant { color:#c6f6c6; }
+                .msg.system { color:#aaa; font-style:italic; }
+                .bubble { padding:.6rem .75rem; background:#222; border-radius:8px; display:inline-block; max-width:70ch; white-space:pre-wrap; word-break:break-word; }
+                .user .bubble { background:#123d55; }
+                .assistant .bubble { background:#1d3d1d; }
+                form { display:flex; gap:.5rem; padding:.75rem; background:#181818; }
+                input[type=text] { flex:1; padding:.55rem .7rem; border:1px solid #333; border-radius:6px; background:#101010; color:#eee; }
+                input[type=text]:focus { outline:2px solid #2c5aa0; }
+                button { padding:.55rem 1rem; border:1px solid #2d5fff; background:#2d5fff; color:#fff; border-radius:6px; cursor:pointer; font-weight:600; }
+                button:disabled { opacity:.55; cursor:progress; }
+                .toolbar { display:flex; gap:1rem; align-items:center; padding:0 .75rem .5rem; font-size:.8rem; flex-wrap:wrap; }
+                label { display:inline-flex; align-items:center; gap:.35rem; cursor:pointer; }
+                .small { font-size:.7rem; opacity:.65; }
+                #status { font-size:.7rem; opacity:.7; margin-left:auto; }
+                a { color:#58a6ff; }
+            </style>
+        </head>
+        <body>
+            <header>API Assistant (Simple)</header>
+            <div class='toolbar'>
+                <label><input type='checkbox' id='assistant' checked/> Assistant Auto Tools</label>
+                <label>Max Tools <input type='number' id='maxTools' min='1' max='5' value='1' style='width:60px;'/></label>
+                <span class='small'>Type a prompt like: <code>pending payments status=pending</code> or <code>cash summary</code></span>
+                <span id='status'>Idle</span>
+                <button id='cfgBtn' style='margin-left:auto'>Configure</button>
+            </div>
+
+            <div id='log'></div>
+            <dialog id='cfgDlg'>
+                <form method='dialog' id='cfgForm' style='display:flex;flex-direction:column;gap:.5rem;min-width:320px;'>
+                    <h3>Configure Credentials</h3>
+                    <label>Username <input type='text' id='cfgUser' required></label>
+                    <label>Password <input type='password' id='cfgPass' required></label>
+                    <label>Base URL <input type='text' id='cfgBase' placeholder='http://127.0.0.1:9001' required></label>
+                    <div style='display:flex;gap:.5rem;justify-content:flex-end'>
+                        <button value='cancel'>Cancel</button>
+                        <button id='cfgSave' value='default'>Save</button>
+                    </div>
+                    <p class='small'>Tip: DEV/TE1/TE2 can be mapped by Base URL (e.g., http://dev-host:port)</p>
+                </form>
+            </dialog>
+            <form id='chatForm'>
+                <input id='input' type='text' autocomplete='off' placeholder='Ask something (e.g., show pending payments status=pending)' />
+                <button id='sendBtn' type='submit'>Send</button>
+
+            </form>
+            <script>
+                const logEl = document.getElementById('log');
+                const form = document.getElementById('chatForm');
+                const input = document.getElementById('input');
+                const assistantToggle = document.getElementById('assistant');
+                const maxTools = document.getElementById('maxTools');
+                const statusEl = document.getElementById('status');
+                const sendBtn = document.getElementById('sendBtn');
+
+                const cfgBtn = document.getElementById('cfgBtn');
+                const cfgDlg = document.getElementById('cfgDlg');
+                const cfgForm = document.getElementById('cfgForm');
+                const cfgUser = document.getElementById('cfgUser');
+                const cfgPass = document.getElementById('cfgPass');
+                const cfgBase = document.getElementById('cfgBase');
+
+                
+                // Surface JS errors in the UI so users see why nothing appears
+                function logErrorToUI(text){
+                    try{
+                        const wrap = document.createElement('div');
+                        wrap.className = 'msg system';
+                        const bubble = document.createElement('div');
+                        bubble.className = 'bubble';
+                        bubble.textContent = String(text);
+                        wrap.appendChild(bubble);
+                        logEl.appendChild(wrap);
+                        logEl.scrollTop = logEl.scrollHeight;
+                    }catch(_e){ /* ignore */ }
+                }
+                window.addEventListener('error', (e)=>{
+                    const msg = e && (e.message || (e.error && e.error.message)) || 'Unknown script error';
+                    logErrorToUI('JS Error: ' + msg);
+                });
+                window.addEventListener('unhandledrejection', (e)=>{
+                    const r = e && e.reason;
+                    const msg = typeof r === 'string' ? r : (r && r.message) ? r.message : (r ? JSON.stringify(r) : 'Unknown promise rejection');
+                    logErrorToUI('Unhandled rejection: ' + msg);
+                });
+                
+                let currentPlan = null;
+                function add(role, content){
+                    const wrap = document.createElement('div');
+                    wrap.className = 'msg ' + role;
+                    const bubble = document.createElement('div');
+                    bubble.className = 'bubble';
+
+                    let displayText = content;
+                    let plan = null;
+                    let executions = null;
+
+                    if(role === 'assistant' && content && typeof content === 'object'){
+                        plan = (typeof content.plan !== 'undefined') ? content.plan : null;
+                        executions = (typeof content.executions !== 'undefined') ? content.executions : null;
+                        if(typeof content.answer === 'string'){
+                            displayText = content.answer;
+                        } else if(typeof content.response === 'string'){
+                            displayText = content.response;
+                        } else if(content.response && typeof content.response === 'object'){
+                            displayText = JSON.stringify(content.response, null, 2);
+                        } else if(content.plan){
+                            displayText = 'Plan generated.';
+                        } else {
+                            displayText = JSON.stringify(content, null, 2);
+                        }
+                    } else if(typeof displayText === 'object'){
+                        displayText = JSON.stringify(displayText, null, 2);
+                    }
+
+                    bubble.textContent = displayText;
+                    wrap.appendChild(bubble);
+
+                    if(role === 'assistant' && (plan || executions)){
+                        const details = document.createElement('details');
+                        details.style.marginTop = '0.25rem';
+                        const summary = document.createElement('summary');
+                        summary.textContent = 'Show reasoning / execution details';
+                        details.appendChild(summary);
+
+                        if(plan !== null){
+                            const prePlan = document.createElement('pre');
+                            prePlan.style.whiteSpace = 'pre-wrap';
+                            prePlan.style.margin = '0.5rem 0';
+                            prePlan.textContent = 'Plan:\n' + JSON.stringify(plan, null, 2);
+                            details.appendChild(prePlan);
+                        }
+                        if(executions !== null){
+                            const preExec = document.createElement('pre');
+                            preExec.style.whiteSpace = 'pre-wrap';
+                            preExec.style.margin = '0.5rem 0';
+                            preExec.textContent = 'Executions:\n' + JSON.stringify(executions, null, 2);
+                            details.appendChild(preExec);
+                        }
+                        wrap.appendChild(details);
+                    }
+
+                    logEl.appendChild(wrap);
+                    logEl.scrollTop = logEl.scrollHeight;
+                }
+
+                add('system', 'Assistant ready.');
+
+                cfgBtn.addEventListener('click', ()=> cfgDlg.showModal());
+                cfgForm.addEventListener('submit', async (e)=>{
+                    e.preventDefault();
+                    const body = {
+                        username: cfgUser.value.trim(),
+                        password: cfgPass.value,
+                        base_url: cfgBase.value.trim(),
+                        environment: 'DEV'
+                    };
+                    try{
+                        const resp = await fetch('/configure', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+                        if(!resp.ok) throw new Error('HTTP '+resp.status);
+                        // optionally, update server spec base URLs so tools hit the same env
+                        await fetch('http://127.0.0.1:9000/mcp/spec_base_url', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({base_url: body.base_url})}).catch(()=>{});
+                        add('system', 'Configuration saved.');
+                        cfgDlg.close();
+                    }catch(err){
+                        add('assistant', 'Config error: '+err.message);
+                    }
+                });
+
+                async function callAssistant(message){
+                    const body = {
+                        message,
+                        auto_execute: true,
+                        max_tools: parseInt(maxTools.value)||1
+                    };
+                    const resp = await fetch('/assistant/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+                    if(!resp.ok) throw new Error('HTTP '+resp.status);
+                        return resp.json();
+                }
+                async function callChat(message){
+                    const body = {message};
+                    const resp = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+                    if(!resp.ok) throw new Error('HTTP '+resp.status);
+                    return resp.json();
+                }
+
+
+                form.addEventListener('submit', async (e)=>{
+                    e.preventDefault();
+                    const text = input.value.trim();
+                    if(!text) return;
+                    input.value='';
+                    add('user', text);
+                    statusEl.textContent = 'Thinking…';
+                    sendBtn.disabled = true;
+                    try {
+                        let result;
+                        if(assistantToggle.checked){
+                            result = await callAssistant(text);
+                        } else {
+                            result = await callChat(text); // returns ChatResponse shape
+                        }
+                        add('assistant', result);
+                    } catch(err){
+                        add('assistant', 'Error: '+ err.message);
+                    } finally {
+                        sendBtn.disabled = false;
+                        statusEl.textContent = 'Idle';
+                        input.focus();
+                    }
+                });
+            </script>
+        </body>
+        </html>
+        

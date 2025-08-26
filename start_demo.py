@@ -228,7 +228,7 @@ def parse_args():
     mode.add_argument('--prod', action='store_true', help='Production mode (build + serve)')
     parser.add_argument('--with-mock', action='store_true', help='Start mock_api_server.py')
     parser.add_argument('--mock-port', type=int, default=9001, help='Port for mock API server')
-    parser.add_argument('--vite-port', type=int, default=5173, help='Port for Vite dev server')
+    parser.add_argument('--vite-port', type=int, default=9517, help='Port for Vite dev server')
     parser.add_argument('--no-frontend', action='store_true', help='Skip starting frontend even in dev mode')
     parser.add_argument('--force-base', action='append', metavar='SPEC=URL', help='Force base URL for a spec (can repeat)')
     parser.add_argument('--fast-exit', action='store_true', help='Exit after starting (do not monitor)')
@@ -300,12 +300,12 @@ def main():
             print(color("No frontend directory present; skipping UI", YELLOW))
 
     print("\n" + color("Services Running", BOLD))
-    print("- MCP Server:       http://localhost:8000")
-    print("- Chatbot API:      http://localhost:8080")
+    print("- MCP Server:       http://localhost:9000")
+    print("- Chatbot API:      http://localhost:9080")
     if 'FRONTEND' in processes:
         print(f"- Vite Dev UI:      http://localhost:{args.vite_port}")
     if mode == 'prod' and not args.no_frontend:
-        print("- Built UI (served): http://localhost:8080/app/")
+        print("- Built UI (served): http://localhost:9080/app/")
     if 'MOCK' in processes:
         print(f"- Mock API:         http://localhost:{args.mock_port}")
     if extra_env:

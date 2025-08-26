@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 import uvicorn
 import asyncio
 from dotenv import load_dotenv
+from pathlib import Path
+from typing import List
 
 # Ensure .env variables (e.g., GROQ_API_KEY) are loaded for this process
 load_dotenv()
@@ -27,7 +29,7 @@ else:
     logging.getLogger('chatbot_app').info('GROQ_API_KEY not set for chatbot_app (will use fallback summaries).')
 
 from fastmcp_client import ChatbotFastMCPClient
-from assistant_core import synthesize_answer
+from assistant_core import synthesize_answer, tokenize, score_tool, select_tools, parse_inline_args
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chatbot_app")
@@ -50,7 +52,7 @@ async def access_log(request: Request, call_next):
 if os.path.isdir("frontend/dist"):
     app.mount("/app", StaticFiles(directory="frontend/dist", html=True), name="frontend")
 
-# CORS for React dev server (default Vite 5173 / CRA 3000)
+# CORS for React dev server (default Vite 9517 / CRA 3000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[],  # use regex instead for all localhost ports
@@ -97,8 +99,8 @@ class AssistantResponse(BaseModel):
     mode: str = "assistant"
     message: str
     session_id: str
-    plan: Dict[str, Any]
-    executions: Optional[Any] = None
+    plan: List[Dict[str, Any]]
+    executions: Optional[List[Dict[str, Any]]] = None
     answer: Optional[str] = None
     # For simple UI compatibility (expects `response` like ChatResponse)
     response: Optional[Any] = None
@@ -115,13 +117,13 @@ class ConfigurationRequest(BaseModel):
 async def startup_event():
     global mcp_client
     logger.info("Starting app and creating MCP HTTP client...")
-    mcp_client = ChatbotFastMCPClient(server_url="http://localhost:8000/mcp")
+    mcp_client = ChatbotFastMCPClient(server_url="http://localhost:9000/mcp")
     try:
         ok = await mcp_client.health_check()
         if ok:
             logger.info("Connected to MCP server (HTTP).")
         else:
-            logger.warning("MCP server not reachable at startup (http://localhost:8000).")
+            logger.warning("MCP server not reachable at startup (http://localhost:9000).")
     except Exception as e:
         logger.exception("Startup health check failed: %s", e)
 
@@ -134,7 +136,6 @@ async def shutdown_event():
         logger.info("MCP client closed.")
  
  
-from pydantic import BaseModel
 from typing import List
 
 class ToolSchema(BaseModel):
@@ -162,7 +163,19 @@ async def root():
 
 @app.get("/simple", response_class=HTMLResponse)
 async def simple_ui():
-        """Return a minimal, dependency-free conversational UI (assistant-aware)."""
+        """Return the minimal UI from the external HTML file to avoid inline JS duplication and escaping issues."""
+        try:
+            html_path = Path(__file__).resolve().parent / "simple_ui.html"
+            content = html_path.read_text(encoding="utf-8")
+            return HTMLResponse(content=content)
+        except Exception as e:
+            logger.exception("Failed to read simple_ui.html: %s", e)
+            fallback = """
+            <!DOCTYPE html>
+            <html><head><meta charset='UTF-8'><title>API Assistant (Simple)</title></head>
+            <body><p>Failed to load simple_ui.html. Check server logs.</p></body></html>
+            """
+            return HTMLResponse(content=fallback, status_code=500)
         html = """
         <!DOCTYPE html>
         <html lang='en'>
@@ -200,11 +213,27 @@ async def simple_ui():
                 <label>Max Tools <input type='number' id='maxTools' min='1' max='5' value='1' style='width:60px;'/></label>
                 <span class='small'>Type a prompt like: <code>pending payments status=pending</code> or <code>cash summary</code></span>
                 <span id='status'>Idle</span>
+                <button id='cfgBtn' style='margin-left:auto'>Configure</button>
             </div>
+
             <div id='log'></div>
+            <dialog id='cfgDlg'>
+                <form method='dialog' id='cfgForm' style='display:flex;flex-direction:column;gap:.5rem;min-width:320px;'>
+                    <h3>Configure Credentials</h3>
+                    <label>Username <input type='text' id='cfgUser' required></label>
+                    <label>Password <input type='password' id='cfgPass' required></label>
+                    <label>Base URL <input type='text' id='cfgBase' placeholder='http://127.0.0.1:9001' required></label>
+                    <div style='display:flex;gap:.5rem;justify-content:flex-end'>
+                        <button value='cancel'>Cancel</button>
+                        <button id='cfgSave' value='default'>Save</button>
+                    </div>
+                    <p class='small'>Tip: DEV/TE1/TE2 can be mapped by Base URL (e.g., http://dev-host:port)</p>
+                </form>
+            </dialog>
             <form id='chatForm'>
                 <input id='input' type='text' autocomplete='off' placeholder='Ask something (e.g., show pending payments status=pending)' />
                 <button id='sendBtn' type='submit'>Send</button>
+
             </form>
             <script>
                 const logEl = document.getElementById('log');
@@ -214,20 +243,124 @@ async def simple_ui():
                 const maxTools = document.getElementById('maxTools');
                 const statusEl = document.getElementById('status');
                 const sendBtn = document.getElementById('sendBtn');
-
+                const planBtn = document.getElementById('planBtn');
+                const cfgBtn = document.getElementById('cfgBtn');
+                const cfgDlg = document.getElementById('cfgDlg');
+                const cfgForm = document.getElementById('cfgForm');
+                const cfgUser = document.getElementById('cfgUser');
+                const cfgPass = document.getElementById('cfgPass');
+                const cfgBase = document.getElementById('cfgBase');
+                const planContainer = document.getElementById('planContainer');
+                const planSummary = document.getElementById('planSummary');
+                const executePlanBtn = document.getElementById('executePlanBtn');
+                const cancelPlanBtn = document.getElementById('cancelPlanBtn');
+                const hidePlanBtn = document.getElementById('hidePlanBtn');
+                
+                // Surface JS errors in the UI so users see why nothing appears
+                function logErrorToUI(text){
+                    try{
+                        const wrap = document.createElement('div');
+                        wrap.className = 'msg system';
+                        const bubble = document.createElement('div');
+                        bubble.className = 'bubble';
+                        bubble.textContent = String(text);
+                        wrap.appendChild(bubble);
+                        logEl.appendChild(wrap);
+                        logEl.scrollTop = logEl.scrollHeight;
+                    }catch(_e){ /* ignore */ }
+                }
+                window.addEventListener('error', (e)=>{
+                    const msg = e && (e.message || (e.error && e.error.message)) || 'Unknown script error';
+                    logErrorToUI('JS Error: ' + msg);
+                });
+                window.addEventListener('unhandledrejection', (e)=>{
+                    const r = e && e.reason;
+                    const msg = typeof r === 'string' ? r : (r && r.message) ? r.message : (r ? JSON.stringify(r) : 'Unknown promise rejection');
+                    logErrorToUI('Unhandled rejection: ' + msg);
+                });
+                
+                let currentPlan = null;
                 function add(role, content){
                     const wrap = document.createElement('div');
                     wrap.className = 'msg ' + role;
                     const bubble = document.createElement('div');
                     bubble.className = 'bubble';
-                    if(typeof content === 'object') content = JSON.stringify(content, null, 2);
-                    bubble.textContent = content;
+
+                    let displayText = content;
+                    let plan = null;
+                    let executions = null;
+
+                    if(role === 'assistant' && content && typeof content === 'object'){
+                        plan = (typeof content.plan !== 'undefined') ? content.plan : null;
+                        executions = (typeof content.executions !== 'undefined') ? content.executions : null;
+                        if(typeof content.answer === 'string'){
+                            displayText = content.answer;
+                        } else if(typeof content.response === 'string'){
+                            displayText = content.response;
+                        } else if(content.response && typeof content.response === 'object'){
+                            displayText = JSON.stringify(content.response, null, 2);
+                        } else if(content.plan){
+                            displayText = 'Plan generated.';
+                        } else {
+                            displayText = JSON.stringify(content, null, 2);
+                        }
+                    } else if(typeof displayText === 'object'){
+                        displayText = JSON.stringify(displayText, null, 2);
+                    }
+
+                    bubble.textContent = displayText;
                     wrap.appendChild(bubble);
+
+                    if(role === 'assistant' && (plan || executions)){
+                        const details = document.createElement('details');
+                        details.style.marginTop = '0.25rem';
+                        const summary = document.createElement('summary');
+                        summary.textContent = 'Show reasoning / execution details';
+                        details.appendChild(summary);
+
+                        if(plan !== null){
+                            const prePlan = document.createElement('pre');
+                            prePlan.style.whiteSpace = 'pre-wrap';
+                            prePlan.style.margin = '0.5rem 0';
+                            prePlan.textContent = 'Plan:\\n' + JSON.stringify(plan, null, 2);
+                            details.appendChild(prePlan);
+                        }
+                        if(executions !== null){
+                            const preExec = document.createElement('pre');
+                            preExec.style.whiteSpace = 'pre-wrap';
+                            preExec.style.margin = '0.5rem 0';
+                            preExec.textContent = 'Executions:\\n' + JSON.stringify(executions, null, 2);
+                            details.appendChild(preExec);
+                        }
+                        wrap.appendChild(details);
+                    }
+
                     logEl.appendChild(wrap);
                     logEl.scrollTop = logEl.scrollHeight;
                 }
 
                 add('system', 'Assistant ready.');
+
+                cfgBtn.addEventListener('click', ()=> cfgDlg.showModal());
+                cfgForm.addEventListener('submit', async (e)=>{
+                    e.preventDefault();
+                    const body = {
+                        username: cfgUser.value.trim(),
+                        password: cfgPass.value,
+                        base_url: cfgBase.value.trim(),
+                        environment: 'DEV'
+                    };
+                    try{
+                        const resp = await fetch('/configure', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+                        if(!resp.ok) throw new Error('HTTP '+resp.status);
+                        // optionally, update server spec base URLs so tools hit the same env
+                        await fetch('http://127.0.0.1:9000/mcp/spec_base_url', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({base_url: body.base_url})}).catch(()=>{});
+                        add('system', 'Configuration saved.');
+                        cfgDlg.close();
+                    }catch(err){
+                        add('assistant', 'Config error: '+err.message);
+                    }
+                });
 
                 async function callAssistant(message){
                     const body = {
@@ -245,6 +378,8 @@ async def simple_ui():
                     if(!resp.ok) throw new Error('HTTP '+resp.status);
                     return resp.json();
                 }
+                
+
 
                 form.addEventListener('submit', async (e)=>{
                     e.preventDefault();
@@ -254,6 +389,7 @@ async def simple_ui():
                     add('user', text);
                     statusEl.textContent = 'Thinking…';
                     sendBtn.disabled = true;
+                    planBtn.disabled = true;
                     try {
                         let result;
                         if(assistantToggle.checked){
@@ -261,11 +397,12 @@ async def simple_ui():
                         } else {
                             result = await callChat(text); // returns ChatResponse shape
                         }
-                        add('assistant', result.response || result.plan || result);
+                        add('assistant', result);
                     } catch(err){
                         add('assistant', 'Error: '+ err.message);
                     } finally {
                         sendBtn.disabled = false;
+                        planBtn.disabled = false;
                         statusEl.textContent = 'Idle';
                         input.focus();
                     }
@@ -390,68 +527,27 @@ async def chat_endpoint(req: ChatRequest):
     mcp_client.base_url = cfg["base_url"]
     mcp_client.environment = cfg.get("environment", "DEV")
 
-    # ensure login
+    # ensure login once before delegating to assistant
     if not mcp_client.authenticated:
         login_result = await mcp_client.login()
         if login_result.get("status") == "error":
             return ChatResponse(response={"status": "error", "message": f"Login failed: {login_result.get('message')}"} , session_id=session_id, timestamp=datetime.now().isoformat())
         mcp_client.authenticated = True
 
-    # ask question
-    answer = await mcp_client.ask_question(req.message)
-    # store assistant reply to session history (best-effort)
-    session["conversation_history"].append({"role": "assistant", "content": answer, "timestamp": datetime.now().isoformat()})
+    # Delegate to assistant mode for planning/execution; reuse internal function
+    assistant_req = AssistantRequest(message=req.message, session_id=session_id, auto_execute=True, max_tools=3)
+    assistant_resp = await assistant_chat(assistant_req)  # type: ignore
+    # Record assistant answer to session
+    answer_payload = assistant_resp.response if hasattr(assistant_resp, 'response') else getattr(assistant_resp, 'answer', None)
+    session["conversation_history"].append({"role": "assistant", "content": answer_payload, "timestamp": datetime.now().isoformat()})
+    return ChatResponse(response=answer_payload, session_id=session_id, timestamp=datetime.now().isoformat())
 
-    logger.info("/chat answer ready, type=%s", type(answer).__name__)
-
-    return ChatResponse(response=answer, session_id=session_id, timestamp=datetime.now().isoformat())
 
 
-# Removed legacy helper aliases for minimal demo
-
-def _synthesize_answer(executions: list) -> str:
-    if not executions:
-        return "No tool executions were performed."
-    lines = []
-    aggregate_counts = []
-    for ex in executions:
-        if ex.get('status') != 'success':
-            lines.append(f"{ex.get('tool')}: error {ex.get('error')}")
-            continue
-        res = ex.get('result')
-        # Standard FastAPI endpoint wrapper shape {status, url, status_code, response}
-        payload = res.get('response') if isinstance(res, dict) else res
-        count_info = None
-        # Try to locate primary list
-        if isinstance(payload, list):
-            count_info = (len(payload), 'items')
-        elif isinstance(payload, dict):
-            # pick the largest list value
-            best_key = None; best_len = -1
-            for k,v in payload.items():
-                if isinstance(v, list):
-                    l = len(v)
-                    if l > best_len:
-                        best_len = l; best_key = k
-            if best_key is not None:
-                count_info = (best_len, best_key)
-        if count_info:
-            n, label = count_info
-            aggregate_counts.append((ex.get('tool'), n, label))
-            lines.append(f"{ex.get('tool')}: {n} {label}")
-        else:
-            lines.append(f"{ex.get('tool')}: succeeded")
-    if not aggregate_counts:
-        return "; ".join(lines)
-    summary_parts = [f"{n} from {tool}" for tool, n, _ in aggregate_counts]
-    total = sum(n for _, n, _ in aggregate_counts)
-    return "; ".join(lines) + f". Total items across tools: {total} (" + ", ".join(summary_parts) + ")"
 
 @app.post('/assistant/chat', response_model=AssistantResponse)
 async def assistant_chat(req: AssistantRequest):
-    """Assistant mode using LLM agent for planning/execution (minimal logic).
-    The LLM decides the best tool(s); we then synthesize an answer.
-    """
+    """Single-agent flow: delegate planning+execution to the LLM agent and return its answer."""
     global mcp_client
     if not mcp_client:
         raise HTTPException(status_code=503, detail='MCP client not initialized')
@@ -460,86 +556,36 @@ async def assistant_chat(req: AssistantRequest):
     session = get_or_create_session(session_id)
     session['conversation_history'].append({'role': 'user', 'content': req.message, 'timestamp': datetime.now().isoformat()})
 
-    # Call the server's LLM agent endpoint directly (only if available)
-    agent = None
     try:
-        await mcp_client._ensure_session()  # type: ignore
-        base_url = mcp_client.server_url.rsplit('/mcp', 1)[0]
-        # Preflight: check if LLM router is mounted
-        llm_ready = False
-        try:
-            async with mcp_client._session.get(f"{base_url}/llm/status") as s:  # type: ignore
-                llm_ready = (s.status == 200)
-        except Exception:
-            llm_ready = False
-        if llm_ready:
-            payload = {
-                'message': req.message,
-                'max_steps': max(1, int(req.max_tools or 1)),
-                'dry_run': False
-            }
-            async with mcp_client._session.post(f"{base_url}/llm/agent", json=payload) as resp:  # type: ignore
-                if resp.status == 200:
-                    agent = await resp.json()
-                else:
-                    agent = None
-    except Exception:
-        # Any error -> fallback to client-side planning
-        agent = None
-
-    # Agent returns plan and (optionally) executions
-    plan_steps = (agent.get('plan') if isinstance(agent, dict) else None) or []
-    executions = (agent.get('executions') if isinstance(agent, dict) else None) or []
-    # Minimal client-side fallback planning if LLM route is unavailable or returned no steps
-    if not plan_steps:
-        tools_result = await mcp_client.list_tools()
-        tool_names = [t.get('name') for t in tools_result.get('tools', []) if isinstance(t, dict)] if isinstance(tools_result, dict) else []
-        text = (req.message or '').lower()
-        def pick(*hints: str):
-            for h in hints:
-                for tn in tool_names:
-                    if h in tn.lower():
-                        return tn
-            return None
-        chosen = None
-        args = {}
-        if 'pending payments' in text:
-            chosen = pick('getpayments', 'payments')
-            args = {'status': 'pending'}
-        elif 'payments' in text:
-            chosen = pick('getpayments', 'payments')
-        elif 'transactions' in text:
-            chosen = pick('gettransactions', 'transactions')
-        elif 'cash' in text or 'summary' in text:
-            chosen = pick('getcashsummary', 'summary', 'cash')
-        if not chosen and tool_names:
-            chosen = tool_names[0]
-        if chosen:
-            plan_steps = [{'tool': chosen, 'arguments': args}]
-    # If executions are not provided (dry_run), execute selected plan here
-    if req.auto_execute and not executions:
-        for step in plan_steps[: max(1, int(req.max_tools or 1))]:
-            t = step.get('tool'); args = step.get('arguments') or {}
-            try:
-                result = await mcp_client.call_tool(t, **args)
-                executions.append({'tool': t, 'status': 'success', 'result': result})
-            except Exception as e:
-                executions.append({'tool': t, 'status': 'error', 'error': str(e)})
-
-    plan = {
-        'agent_note': (agent.get('notes') if isinstance(agent, dict) else None),
-        'selected': [s.get('tool') for s in plan_steps],
-        'arguments': {s.get('tool'): s.get('arguments') for s in plan_steps},
-        'executed': bool(executions)
-    }
-
-    answer = synthesize_answer(executions) if executions else None
-    if answer:
+        # Call the MCP server's agent endpoint
+        agent_response = await mcp_client.call_llm_agent(req.message)
+        
+        if agent_response.get('status') == 'error':
+            raise HTTPException(status_code=500, detail=agent_response.get('message', 'Agent execution failed'))
+        
+        # Record assistant answer to session
+        answer = agent_response.get('answer', 'No answer provided.')
         session['conversation_history'].append({'role': 'assistant', 'content': answer, 'timestamp': datetime.now().isoformat()})
-    session['conversation_history'].append({'role': 'assistant', 'content': plan, 'timestamp': datetime.now().isoformat()})
-    logger.info("/assistant/chat plan=%s executed=%s", plan.get('selected'), bool(executions))
-    return AssistantResponse(message=req.message, session_id=session_id, plan=plan, executions=executions, answer=answer, response=answer)
+        
+        return AssistantResponse(
+            mode="assistant",
+            message=req.message,
+            session_id=session_id,
+            plan=agent_response.get('plan', {}),
+            executions=agent_response.get('executions', []),
+            answer=answer,
+            response=agent_response
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Assistant chat error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/test_endpoint")
+async def test_endpoint(data: dict):
+    return {"received": data, "status": "ok"}
 
 @app.get("/status")
 async def get_status():
@@ -604,5 +650,5 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
 
 if __name__ == "__main__":
-    logger.info("Starting uvicorn for chatbot_app on 0.0.0.0:8080")
-    uvicorn.run("chatbot_app:app", host="0.0.0.0", port=8080, reload=True, log_level="info")
+    logger.info("Starting uvicorn for chatbot_app on 0.0.0.0:9080")
+    uvicorn.run("chatbot_app:app", host="0.0.0.0", port=9080, reload=True, log_level="info")
