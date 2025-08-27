@@ -163,25 +163,44 @@ def _coerce_args_to_dict(args: Any) -> Dict[str, Any]:
     # fallback empty if nothing parsed
     return out
 
-def _groq_chat(messages: List[Dict[str, str]], model: Optional[str] = None) -> str:
-    """Single place to call Groq chat completions and return the assistant text."""
-    from groq import Groq
-    api_key = os.environ.get('GROQ_API_KEY')
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not set")
-    client = Groq(api_key=api_key)
-    selected_model = model or os.environ.get('GROQ_MODEL') or 'llama-3.1-8b-instant'
-    resp = client.chat.completions.create(model=selected_model, messages=messages, temperature=0)
-    content = (resp.choices[0].message.content or '').strip()
+def _openai_chat(messages: List[Dict[str, str]], model: Optional[str] = None) -> str:
+    """Single place to call OpenAI chat completions and return the assistant text."""
+    import os
+    from dotenv import load_dotenv
+    from openai import AzureOpenAI
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    
+    load_dotenv()
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    model_name = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    token_provider = get_bearer_token_provider(DefaultAzureCredential(), "https://cognitiveservices.azure.com/.default")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION")
+    
+    client = AzureOpenAI(
+        api_version=api_version,
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider,
+    )
+    
+    selected_model = model or deployment
+    response = client.chat.completions.create(
+        messages=messages,
+        max_tokens=4096,
+        temperature=1.0,
+        top_p=1.0,
+        model=selected_model
+    )
+    content = (response.choices[0].message.content or '').strip()
     return content
 
-def _summarize_executions_with_groq(executions: List[Dict[str, Any]], model: Optional[str] = None) -> Optional[str]:
-    """Summarize tool executions with a concise, generic financial helper prompt. Returns None if Groq unavailable."""
+def _summarize_executions_with_openai(executions: List[Dict[str, Any]], model: Optional[str] = None) -> Optional[str]:
+    """Summarize tool executions with a concise, generic financial helper prompt. Returns None if OpenAI unavailable."""
     import os, json as _json
     if not executions:
         return None
-    api_key = os.environ.get('GROQ_API_KEY')
-    if not api_key:
+    endpoint = os.environ.get('AZURE_OPENAI_ENDPOINT')
+    if not endpoint:
         return None
     tool_blocks: List[str] = []
     for ex in executions:
@@ -208,7 +227,7 @@ def _summarize_executions_with_groq(executions: List[Dict[str, Any]], model: Opt
         + "\n\n".join(tool_blocks)
     )
     try:
-        return _groq_chat([
+        return _openai_chat([
             {"role": "system", "content": sys},
             {"role": "user", "content": usr}
         ], model=model)
@@ -328,7 +347,7 @@ class LLMPlanResponse(BaseModel):
 @router.post('/agent', response_model=LLMAgentResponse)
 def llm_agent(req: LLMAgentRequest):
     from openapi_mcp_server import server
-    """Experimental agent endpoint using Groq only for planning (fallback to rule-based)."""
+    """Experimental agent endpoint using OpenAI for planning (fallback to rule-based)."""
     try:
         tool_names = list(server.api_tools.keys())
         if not tool_names:
@@ -341,7 +360,7 @@ def llm_agent(req: LLMAgentRequest):
             
         executions: List[Dict[str, Any]] = []
         used_llm = False
-        debug: dict = {"message": str(req.message), "provider": "groq", "used_llm": False, "error": None}
+        debug: dict = {"message": str(req.message), "provider": "openai", "used_llm": False, "error": None}
 
         # Build a compact tool catalog (name, description, parameters)
         catalog_lines: List[str] = []
@@ -376,13 +395,13 @@ def llm_agent(req: LLMAgentRequest):
         ]
 
         try:
-            # Check if GROQ_API_KEY is available
+            # Check if Azure OpenAI is available
             import os
-            if not os.environ.get('GROQ_API_KEY'):
-                logger.warning("GROQ_API_KEY not set, falling back to rule-based parsing")
-                raise RuntimeError("GROQ_API_KEY not configured")
+            if not os.environ.get('AZURE_OPENAI_ENDPOINT'):
+                logger.warning("AZURE_OPENAI_ENDPOINT not set, falling back to rule-based parsing")
+                raise RuntimeError("Azure OpenAI not configured")
                 
-            raw = _groq_chat(content, model=req.model)
+            raw = _openai_chat(content, model=req.model)
             parsed = _extract_json_payload(raw)
             if isinstance(parsed, dict):
                 parsed = [parsed]
@@ -397,10 +416,10 @@ def llm_agent(req: LLMAgentRequest):
             if not plan:
                 plan = _basic_intent_parse(req.message, tool_names)
             used_llm = True
-            logger.info("[LLM] Groq planning steps=%d", len(plan))
+            logger.info("[LLM] OpenAI planning steps=%d", len(plan))
             debug["plan_len"] = len(plan)
         except Exception as e:
-            logger.warning("Groq planning error: %s -- falling back to rule-based", e)
+            logger.warning("OpenAI planning error: %s -- falling back to rule-based", e)
             debug["error"] = str(e)
             try:
                 plan = _basic_intent_parse(req.message, tool_names)
@@ -435,10 +454,10 @@ def llm_agent(req: LLMAgentRequest):
                 except Exception as e:
                     executions.append({'tool': step.tool, 'status': 'error', 'error': str(e)})
                     results_map[step.tool] = {'status': 'error', 'error': str(e)}
-        # Optional final answer via Groq summarization
+        # Optional final answer via OpenAI summarization
         answer_text: Optional[str] = None
         if not req.dry_run:
-            answer_text = _summarize_executions_with_groq(executions, model=req.model)
+            answer_text = _summarize_executions_with_openai(executions, model=req.model)
 
         note = 'llm_plan' if used_llm else 'rule_based_plan'
         debug["used_llm"] = used_llm
@@ -468,15 +487,15 @@ def llm_agent(req: LLMAgentRequest):
 
 @router.get('/status')
 def llm_status():
-    """Report Groq availability, selected model, and tool count."""
-    groq_present = bool(os.environ.get('GROQ_API_KEY'))
-    model = os.environ.get('GROQ_MODEL') or 'llama-3.1-8b-instant'
+    """Report Azure OpenAI availability, selected model, and tool count."""
+    azure_endpoint_present = bool(os.environ.get('AZURE_OPENAI_ENDPOINT'))
+    model = os.environ.get('AZURE_OPENAI_DEPLOYMENT') or 'gpt-4'
     return {
-        'provider': 'groq',
-        'groq_api_key_present': groq_present,
+        'provider': 'openai',
+        'azure_openai_endpoint_present': azure_endpoint_present,
         'model': model,
         'tool_count': len(server.api_tools),
-        'note': 'Set GROQ_API_KEY and optionally GROQ_MODEL. Agent uses Groq only; OpenAI is ignored.'
+        'note': 'Set AZURE_OPENAI_ENDPOINT and optionally AZURE_OPENAI_DEPLOYMENT. Agent uses Azure OpenAI.'
     }
 
 @router.get('/debug')

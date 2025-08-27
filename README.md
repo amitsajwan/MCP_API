@@ -1,10 +1,10 @@
-## OpenAPI MCP Server (Agentic, Groq-only)
+## OpenAPI MCP Server (Agentic, Azure OpenAI)
 
 Minimal agentic bridge that auto-loads OpenAPI specs as tools and lets an LLM plan and execute multi-step calls.
 
 Key points
 - Auto-load OpenAPI specs from `openapi_specs/` and expose tools under `/mcp/*`
-- Agentic planning via Groq only (`/llm/agent`) with sequential multi-API execution
+- Agentic planning via Azure OpenAI (`/llm/agent`) with sequential multi-API execution
 - Assistant endpoint `/assistant/chat` returns a natural-language answer for UIs
 - Simple HTML UI at `/simple` (from `chatbot_app.py`)
 - Clear logging for inbound requests and outbound API calls
@@ -36,8 +36,8 @@ Environment
 - FORCE_BASE_URL or FORCE_BASE_URL_<SPEC>: override spec server URL
 - MOCK_ALL=1: force all specs to mock base (default http://localhost:9001)
 - AUTO_MOCK_FALLBACK=1: retry failed external calls against mock
-- GROQ_API_KEY: required for LLM planning/summaries
-- GROQ_MODEL: optional (default: llama-3.1-8b-instant)
+- AZURE_OPENAI_ENDPOINT: required for LLM planning/summaries
+- AZURE_OPENAI_DEPLOYMENT: optional (default: gpt-4)
 
 Endpoints
 - GET  /mcp/tools                     list tools
@@ -57,11 +57,11 @@ Logging
 - Outbound API logs: method, URL, query/header keys, and a response preview
 
 Troubleshooting
-- Check /llm/status -> { provider: "groq", groq_api_key_present: true }
+- Check /llm/status -> { provider: "openai", azure_openai_endpoint_present: true }
 - If external endpoints fail, set FORCE_BASE_URL or use MOCK_ALL/AUTO_MOCK_FALLBACK
 
 Notes
-- OpenAI/HuggingFace planning removed; Groq-only to keep it simple and reliable.
+- Groq planning removed; Azure OpenAI-only to keep it simple and reliable.
 - Older guides were removed to avoid duplication; this README is the source of truth.
  - Client-side planning and chaining is the default. Server is tools-only.
 
