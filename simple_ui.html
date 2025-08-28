@@ -36,6 +36,7 @@
                 <span class='small'>Type a prompt like: <code>pending payments status=pending</code> or <code>cash summary</code></span>
                 <span id='loginStatus' style='color:#ff6b6b; font-weight:600;'>Not Configured</span>
                 <span id='status'>Idle</span>
+                <button id='loginBtn' style='display:none; background:#28a745; border-color:#28a745; margin-right:0.5rem;'>Login</button>
                 <button id='cfgBtn' style='margin-left:auto; background:#ff6b6b; border-color:#ff6b6b;'>Login & Configure</button>
             </div>
 
@@ -69,6 +70,7 @@
                 const sendBtn = document.getElementById('sendBtn');
 
                 const cfgBtn = document.getElementById('cfgBtn');
+                const loginBtn = document.getElementById('loginBtn');
                 const cfgDlg = document.getElementById('cfgDlg');
                 const cfgForm = document.getElementById('cfgForm');
                 const cfgUser = document.getElementById('cfgUser');
@@ -163,6 +165,35 @@
                 add('system', 'Assistant ready. Please click "Login & Configure" to set up your credentials.');
 
                 cfgBtn.addEventListener('click', ()=> cfgDlg.showModal());
+                
+                loginBtn.addEventListener('click', async ()=> {
+                    loginBtn.disabled = true;
+                    loginBtn.textContent = 'Logging in...';
+                    try {
+                        add('system', 'Re-authenticating...');
+                        const testResp = await fetch('/ask', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({message: 'test login', session_id: 'reauth_test'})
+                        });
+                        
+                        if (testResp.ok) {
+                            const testResult = await testResp.json();
+                            if (testResult.response && testResult.response.status !== 'error') {
+                                add('system', '✅ Re-authentication successful! You can now use the assistant.');
+                            } else {
+                                add('system', '❌ Re-authentication failed. Please use Reconfigure to update your credentials.');
+                            }
+                        } else {
+                            add('system', '❌ Re-authentication failed. Please use Reconfigure to update your credentials.');
+                        }
+                    } catch(err) {
+                        add('system', '❌ Re-authentication error: ' + err.message);
+                    } finally {
+                        loginBtn.disabled = false;
+                        loginBtn.textContent = 'Login';
+                    }
+                });
                 const loginStatusEl = document.getElementById('loginStatus');
                 
                 function updateLoginStatus(isConfigured) {
@@ -172,12 +203,16 @@
                         cfgBtn.textContent = 'Reconfigure';
                         cfgBtn.style.background = '#2d5fff';
                         cfgBtn.style.borderColor = '#2d5fff';
+                        cfgBtn.style.marginLeft = '0.5rem';
+                        loginBtn.style.display = 'inline-block';
                     } else {
                         loginStatusEl.textContent = 'Not Configured';
                         loginStatusEl.style.color = '#ff6b6b';
                         cfgBtn.textContent = 'Login & Configure';
                         cfgBtn.style.background = '#ff6b6b';
                         cfgBtn.style.borderColor = '#ff6b6b';
+                        cfgBtn.style.marginLeft = 'auto';
+                        loginBtn.style.display = 'none';
                     }
                 }
 
