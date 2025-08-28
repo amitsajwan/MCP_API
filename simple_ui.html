@@ -31,12 +31,9 @@
         <body>
             <header>API Assistant (Simple)</header>
             <div class='toolbar'>
-                <label><input type='checkbox' id='assistant' checked/> Assistant Auto Tools</label>
-                <label>Max Tools <input type='number' id='maxTools' min='1' max='5' value='1' style='width:60px;'/></label>
                 <span class='small'>Type a prompt like: <code>pending payments status=pending</code> or <code>cash summary</code></span>
                 <span id='loginStatus' style='color:#ff6b6b; font-weight:600;'>Not Configured</span>
                 <span id='status'>Idle</span>
-                <button id='loginBtn' style='display:none; background:#28a745; border-color:#28a745; margin-right:0.5rem;'>Login</button>
                 <button id='cfgBtn' style='margin-left:auto; background:#ff6b6b; border-color:#ff6b6b;'>Login & Configure</button>
             </div>
 
@@ -64,19 +61,15 @@
                 const logEl = document.getElementById('log');
                 const form = document.getElementById('chatForm');
                 const input = document.getElementById('input');
-                const assistantToggle = document.getElementById('assistant');
-                const maxTools = document.getElementById('maxTools');
                 const statusEl = document.getElementById('status');
                 const sendBtn = document.getElementById('sendBtn');
 
                 const cfgBtn = document.getElementById('cfgBtn');
-                const loginBtn = document.getElementById('loginBtn');
                 const cfgDlg = document.getElementById('cfgDlg');
                 const cfgForm = document.getElementById('cfgForm');
                 const cfgUser = document.getElementById('cfgUser');
                 const cfgPass = document.getElementById('cfgPass');
                 const cfgBase = document.getElementById('cfgBase');
-                const cfgLoginPath = document.getElementById('cfgLoginPath');
 
                 
                 // Surface JS errors in the UI so users see why nothing appears
@@ -263,12 +256,7 @@
                     if(!resp.ok) throw new Error('HTTP '+resp.status);
                         return resp.json();
                 }
-                async function callChat(message){
-                    const body = {message};
-                    const resp = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-                    if(!resp.ok) throw new Error('HTTP '+resp.status);
-                    return resp.json();
-                }
+
 
 
                 form.addEventListener('submit', async (e)=>{
@@ -280,12 +268,7 @@
                     statusEl.textContent = 'Thinking…';
                     sendBtn.disabled = true;
                     try {
-                        let result;
-                        if(assistantToggle.checked){
-                            result = await callAssistant(text);
-                        } else {
-                            result = await callChat(text); // returns ChatResponse shape
-                        }
+                        let result = await callAssistant(text);
                         add('assistant', result);
                     } catch(err){
                         add('assistant', 'Error: '+ err.message);

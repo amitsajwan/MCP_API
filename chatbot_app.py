@@ -21,12 +21,8 @@ from dotenv import load_dotenv
 from pathlib import Path
 from typing import List
 
-# Ensure .env variables (e.g., AZURE_OPENAI_ENDPOINT) are loaded for this process
+# Ensure .env variables are loaded for this process
 load_dotenv()
-if os.environ.get('AZURE_OPENAI_ENDPOINT'):
-    logging.getLogger('chatbot_app').info('AZURE_OPENAI_ENDPOINT detected (LLM summaries enabled).')
-else:
-    logging.getLogger('chatbot_app').info('AZURE_OPENAI_ENDPOINT not set for chatbot_app (will use fallback summaries).')
 
 from mcp_llm_client import MCPLLMClient
 
@@ -66,7 +62,6 @@ mcp_client: Optional[MCPLLMClient] = None
 
 # simple in-memory session store
 sessions: Dict[str, Dict[str, Any]] = {}
-configurations: Dict[str, Dict[str, Any]] = {}
 
 
 def get_or_create_session(session_id: str):
@@ -78,15 +73,6 @@ def get_or_create_session(session_id: str):
 
 
 # Pydantic models
-class ChatRequest(BaseModel):
-    message: str = Field(..., description="User's message")
-    session_id: Optional[str] = Field(None, description="session id")
-
-
-class ChatResponse(BaseModel):
-    response: Any
-    session_id: str
-    timestamp: str
 
 class AssistantRequest(BaseModel):
     message: str
@@ -111,13 +97,7 @@ class CredentialsRequest(BaseModel):
     login_url: Optional[str] = None
 
 
-class ConfigurationRequest(BaseModel):
-    username: str
-    password: str
-    base_url: str
-    login_path: Optional[str] = "/login"
-    environment: Optional[str] = "DEV"
-    session_id: Optional[str] = None
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -167,7 +147,7 @@ async def get_tools():
 
 @app.get("/")
 async def root():
-    return {"message": "React UI available separately. See frontend/ directory.", "endpoints": ["/configure", "/chat", "/status", "/tools", "/quick_actions", "/run_tool"]}
+    return {"message": "MCP-based API Assistant", "endpoints": ["/credentials", "/login", "/assistant/chat", "/status", "/tools", "/simple"]}
 
 @app.get("/simple", response_class=HTMLResponse)
 async def simple_ui():
@@ -448,110 +428,12 @@ async def get_tool_meta(tool_name: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/run_tool")
-async def run_tool(payload: Dict[str, Any]):
-    """Directly execute a tool (wrapper around MCP client)."""
-    global mcp_client
-    if not mcp_client:
-        raise HTTPException(status_code=503, detail="MCP client not initialized")
-    tool_name = payload.get("tool_name")
-    arguments = payload.get("arguments") or {}
-    if not tool_name:
-        raise HTTPException(status_code=400, detail="tool_name required")
-    try:
-        result = await mcp_client.call_tool(tool_name, **arguments)
-        logger.info("/run_tool %s -> status=%s code=%s", tool_name, result.get('status'), result.get('status_code'))
-        return {"status": "success", "tool": tool_name, "result": result}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/configure")
-async def configure_credentials(req: ConfigurationRequest):
-    global mcp_client, configurations
-    if not mcp_client:
-        raise HTTPException(status_code=503, detail="MCP client not initialized")
-    session_id = req.session_id or "default"
-    configurations[session_id] = {
-        "username": req.username,
-        "password": req.password,
-        "base_url": req.base_url,
-        "login_path": req.login_path,
-        "environment": req.environment,
-        "configured_at": datetime.now().isoformat()
-    }
-    # apply to global client (for simplicity)
-    mcp_client.username = req.username
-    mcp_client.password = req.password
-    mcp_client.base_url = req.base_url
-    mcp_client.login_path = req.login_path
-    mcp_client.environment = req.environment
-    # mark unauthenticated so next ask_question triggers login attempt
-    mcp_client.authenticated = False
-    return {"status": "success", "message": "configuration stored"}
 
 
-@app.get("/configuration/{session_id}")
-async def get_configuration(session_id: str):
-    cfg = configurations.get(session_id)
-    if not cfg:
-        return JSONResponse(status_code=404, content={"status": "not_configured", "message": "No configuration for this session."})
-    return {"status": "configured", "username": cfg["username"], "base_url": cfg["base_url"], "environment": cfg["environment"], "configured_at": cfg["configured_at"]}
 
 
-@app.post("/chat", response_model=ChatResponse)
-async def chat_endpoint(req: ChatRequest):
-    global mcp_client
-    if not mcp_client:
-        raise HTTPException(status_code=503, detail="MCP client not initialized")
 
-    session_id = req.session_id or "default"
-    session = get_or_create_session(session_id)
-    session["conversation_history"].append({"role": "user", "content": req.message, "timestamp": datetime.now().isoformat()})
 
-    cfg = configurations.get(session_id)
-    if not cfg:
-        # Allow discovery questions pre-configuration
-        lowered = req.message.lower().strip()
-        # Broad heuristic: question contains 'api' or 'endpoint' and a query word
-        query_words = ["what", "which", "list", "show", "available"]
-        if ("api" in lowered or "endpoint" in lowered) and any(q in lowered for q in query_words):
-            specs_result = await mcp_client.call_tool("list_loaded_specs")
-            endpoints_result = await mcp_client.call_tool("list_api_endpoints")
-            specs = specs_result.get("specs", []) if isinstance(specs_result, dict) else []
-            grouped = endpoints_result.get("grouped", {}) if isinstance(endpoints_result, dict) else {}
-            endpoint_count = endpoints_result.get("count", sum(len(v) for v in grouped.values())) if isinstance(endpoints_result, dict) else 0
-            human_list = ", ".join([s.get("name", "?") for s in specs]) or "(none loaded)"
-            summary = {
-                "status": "success",
-                "message": f"Loaded API specs: {human_list} ({endpoint_count} endpoints). Use /configure or the UI configuration to add credentials.",
-                "specs": specs,
-                "endpoint_count": endpoint_count,
-                "grouped": grouped
-            }
-            return ChatResponse(response=summary, session_id=session_id, timestamp=datetime.now().isoformat())
-        return ChatResponse(response={"status": "configuration_required", "message": "Please configure your credentials."}, session_id=session_id, timestamp=datetime.now().isoformat())
-
-    # apply config to client for this request
-    mcp_client.username = cfg["username"]
-    mcp_client.password = cfg["password"]
-    mcp_client.base_url = cfg["base_url"]
-    mcp_client.login_path = cfg.get("login_path", "/login")
-    mcp_client.environment = cfg.get("environment", "DEV")
-
-    # ensure login once before delegating to assistant
-    if not mcp_client.authenticated:
-        login_result = await mcp_client.login()
-        if login_result.get("status") == "error":
-            return ChatResponse(response={"status": "error", "message": f"Login failed: {login_result.get('message')}"} , session_id=session_id, timestamp=datetime.now().isoformat())
-        mcp_client.authenticated = True
-
-    # Delegate to assistant mode for planning/execution; reuse internal function
-    assistant_req = AssistantRequest(message=req.message, session_id=session_id, auto_execute=True, max_tools=3)
-    assistant_resp = await assistant_chat(assistant_req)  # type: ignore
-    # Record assistant answer to session
-    answer_payload = assistant_resp.response if hasattr(assistant_resp, 'response') else getattr(assistant_resp, 'answer', None)
-    session["conversation_history"].append({"role": "assistant", "content": answer_payload, "timestamp": datetime.now().isoformat()})
-    return ChatResponse(response=answer_payload, session_id=session_id, timestamp=datetime.now().isoformat())
 
 
 
