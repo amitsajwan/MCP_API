@@ -158,35 +158,6 @@
                 add('system', 'Assistant ready. Please click "Login & Configure" to set up your credentials.');
 
                 cfgBtn.addEventListener('click', ()=> cfgDlg.showModal());
-                
-                loginBtn.addEventListener('click', async ()=> {
-                    loginBtn.disabled = true;
-                    loginBtn.textContent = 'Logging in...';
-                    try {
-                        add('system', 'Re-authenticating...');
-                        const testResp = await fetch('/ask', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({message: 'test login', session_id: 'reauth_test'})
-                        });
-                        
-                        if (testResp.ok) {
-                            const testResult = await testResp.json();
-                            if (testResult.response && testResult.response.status !== 'error') {
-                                add('system', '✅ Re-authentication successful! You can now use the assistant.');
-                            } else {
-                                add('system', '❌ Re-authentication failed. Please use Reconfigure to update your credentials.');
-                            }
-                        } else {
-                            add('system', '❌ Re-authentication failed. Please use Reconfigure to update your credentials.');
-                        }
-                    } catch(err) {
-                        add('system', '❌ Re-authentication error: ' + err.message);
-                    } finally {
-                        loginBtn.disabled = false;
-                        loginBtn.textContent = 'Login';
-                    }
-                });
                 const loginStatusEl = document.getElementById('loginStatus');
                 
                 function updateLoginStatus(isConfigured) {
@@ -197,7 +168,6 @@
                         cfgBtn.style.background = '#2d5fff';
                         cfgBtn.style.borderColor = '#2d5fff';
                         cfgBtn.style.marginLeft = '0.5rem';
-                        loginBtn.style.display = 'inline-block';
                     } else {
                         loginStatusEl.textContent = 'Not Configured';
                         loginStatusEl.style.color = '#ff6b6b';
@@ -205,7 +175,6 @@
                         cfgBtn.style.background = '#ff6b6b';
                         cfgBtn.style.borderColor = '#ff6b6b';
                         cfgBtn.style.marginLeft = 'auto';
-                        loginBtn.style.display = 'none';
                     }
                 }
 
@@ -250,7 +219,7 @@
                     const body = {
                         message,
                         auto_execute: true,
-                        max_tools: parseInt(maxTools.value)||1
+                        max_tools: 3
                     };
                     const resp = await fetch('/assistant/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
                     if(!resp.ok) throw new Error('HTTP '+resp.status);
