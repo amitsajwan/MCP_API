@@ -106,7 +106,9 @@ class AssistantResponse(BaseModel):
 class CredentialsRequest(BaseModel):
     username: str
     password: str
-    spec_name: Optional[str] = None
+    api_key_name: Optional[str] = None
+    api_key_value: Optional[str] = None
+    login_url: Optional[str] = None
 
 
 class ConfigurationRequest(BaseModel):
@@ -556,7 +558,7 @@ async def chat_endpoint(req: ChatRequest):
 
 @app.post('/credentials', response_model=Dict[str, Any])
 async def set_credentials(req: CredentialsRequest):
-    """Set credentials for automatic authentication."""
+    """Set credentials for authentication."""
     global mcp_client
     if not mcp_client:
         raise HTTPException(status_code=503, detail='MCP client not initialized')
@@ -565,11 +567,27 @@ async def set_credentials(req: CredentialsRequest):
         result = await mcp_client.set_credentials(
             username=req.username,
             password=req.password,
-            spec_name=req.spec_name
+            api_key_name=req.api_key_name,
+            api_key_value=req.api_key_value,
+            login_url=req.login_url
         )
         return result
     except Exception as e:
         logger.error(f"Set credentials error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post('/login', response_model=Dict[str, Any])
+async def login():
+    """Login using Basic Auth and return session status."""
+    global mcp_client
+    if not mcp_client:
+        raise HTTPException(status_code=503, detail='MCP client not initialized')
+    
+    try:
+        result = await mcp_client.login()
+        return result
+    except Exception as e:
+        logger.error(f"Login error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post('/assistant/chat', response_model=AssistantResponse)

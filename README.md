@@ -49,6 +49,7 @@ Endpoints
 - POST /mcp/tools/{tool}              execute tool (body: {"arguments": {...}})
 - GET  /mcp/prompts                   quick prompt suggestions
 - POST /credentials                   set authentication credentials
+- POST /login                        login using Basic Auth
 - POST /assistant/chat                UI-friendly query execution with NL summary
 
 Multi-step + simple chaining
@@ -173,21 +174,25 @@ MCP_API/
 
 ## 🔐 Authentication Flow
 
-The new architecture uses **automatic authentication**:
+The new architecture uses **simple two-step authentication**:
 
-1. **Set credentials once**: Use `/credentials` endpoint or UI configuration
-2. **Auto-login**: MCP server automatically logs in when needed
+1. **Set credentials**: Use `/credentials` endpoint or UI configuration
+2. **Login**: Use `/login` endpoint to authenticate and get JSESSIONID
 3. **Session management**: JSESSIONID is cached and reused
-4. **Seamless experience**: No manual login/logout required
+4. **Simple workflow**: Set credentials once, login when needed
 
 ### Example:
 ```bash
 # Set credentials
 curl -X POST http://localhost:9080/credentials \
   -H "Content-Type: application/json" \
-  -d '{"username": "user", "password": "pass", "spec_name": "cash_api"}'
+  -d '{"username": "user", "password": "pass", "login_url": "http://api.company.com/login"}'
 
-# Now all API calls auto-authenticate
+# Login to get JSESSIONID
+curl -X POST http://localhost:9080/login \
+  -H "Content-Type: application/json"
+
+# Now use the assistant
 curl -X POST http://localhost:9080/assistant/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Show me pending payments"}'
