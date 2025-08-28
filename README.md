@@ -74,24 +74,32 @@ Notes
 ## 🏗️ Architecture (Proper MCP)
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   UI            │───▶│  MCP Client      │───▶│  MCP Server     │
-│                 │    │  (LLM-based)     │    │  (Tools Only)   │
-│ - React/HTML    │    │                  │    │                 │
-│ - User Input    │    │ - LLM Planning   │    │ - Tool Registry │
-│                 │    │ - Tool Execution │    │ - Auto Auth     │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │  REST APIs      │
-                       │                 │
-                       │ - Cash API      │
-                       │ - Securities    │
-                       │ - CLS           │
-                       │ - Mailbox       │
-                       └─────────────────┘
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   UI            │───▶│  MCP Client      │───▶│  MCP Server     │───▶│  REST APIs      │
+│                 │    │  (LLM-based)     │    │  (Tools Only)   │    │                 │
+│ - React/HTML    │    │                  │    │                 │    │ - Cash API      │
+│ - User Input    │    │ - LLM Planning   │    │ - Tool Registry │    │ - Securities    │
+│                 │    │ - Tool Execution │    │ - Auto Auth     │    │ - CLS           │
+└─────────────────┘    └──────────────────┘    └─────────────────┘    │ - Mailbox       │
+                                                                      └─────────────────┘
 ```
+
+**Key Points:**
+- **MCP Client** only calls MCP Server tools (never direct REST APIs)
+- **MCP Server** embeds and exposes REST APIs as tools
+- **REST APIs** are abstracted away from the client
+
+## 🔄 Data Flow
+
+1. **User Query** → "Show me pending payments"
+2. **MCP Client** → LLM plans which MCP server tools to call
+3. **MCP Client** → Calls `cash_api_getPayments` tool on MCP server
+4. **MCP Server** → Executes tool, auto-authenticates with REST API
+5. **MCP Server** → Returns result to MCP client
+6. **MCP Client** → LLM generates natural language summary
+7. **UI** → Displays result to user
+
+**Important:** The MCP client never connects directly to REST APIs. All API interactions go through the MCP server's tool layer.
 
 ## 🔧 Configuration
 

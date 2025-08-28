@@ -114,28 +114,31 @@ class MCPLLMClient:
         for tool in self.available_tools:
             tools_info.append(f"- {tool['name']}: {tool['description']}")
         
-        return f"""You are an intelligent assistant that can call tools to help users.
+        return f"""You are an intelligent assistant that can call MCP server tools to help users.
 
-Available tools:
+Available MCP server tools:
 {chr(10).join(tools_info)}
 
 Instructions:
-1. Analyze the user's request and determine which tools to call
-2. Call tools in the correct order to fulfill the request
-3. Use results from previous tools as inputs to subsequent tools when needed
+1. Analyze the user's request and determine which MCP server tools to call
+2. Call MCP server tools in the correct order to fulfill the request
+3. Use results from previous MCP server tools as inputs to subsequent tools when needed
 4. Handle authentication automatically - if a tool fails with auth_required, call set_credentials first
 5. Provide a natural language summary of the results
 
 Tool calling format:
-- Use the exact tool names from the list above
+- Use the exact tool names from the MCP server tools list above
 - Provide all required parameters
 - Handle authentication errors by calling set_credentials if needed
+- NEVER call external APIs directly - only use MCP server tools
 
 Example workflow:
 1. User asks for "pending payments"
-2. Call cash_api_getPayments with status=pending
-3. If auth_required, call set_credentials first, then retry
-4. Summarize the results in natural language"""
+2. Call cash_api_getPayments MCP server tool with status=pending
+3. If auth_required, call set_credentials MCP server tool first, then retry
+4. Summarize the results in natural language
+
+Remember: You ONLY call MCP server tools, never external APIs directly."""
     
     async def _plan_tool_calls(self, user_query: str) -> List[ToolCall]:
         """Use LLM to plan which tools to call."""
