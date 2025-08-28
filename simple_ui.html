@@ -221,19 +221,30 @@
                     const body = {
                         username: cfgUser.value.trim(),
                         password: cfgPass.value,
-                        spec_name: null // Will use default spec
+                        login_url: cfgBase.value.trim() + '/login' // Construct login URL
                     };
                     try{
-                        // Set credentials for automatic authentication
-                        add('system', 'Setting credentials for automatic authentication...');
+                        // Set credentials
+                        add('system', 'Setting credentials...');
                         const resp = await fetch('/credentials', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
                         if(!resp.ok) throw new Error('HTTP '+resp.status);
                         
                         const result = await resp.json();
                         if (result.status === 'success') {
-                            add('system', '✅ Credentials set successfully! API calls will now auto-authenticate.');
-                            updateLoginStatus(true);
-                            cfgDlg.close();
+                            add('system', '✅ Credentials set successfully! Now logging in...');
+                            
+                            // Login
+                            const loginResp = await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}});
+                            if(!loginResp.ok) throw new Error('HTTP '+loginResp.status);
+                            
+                            const loginResult = await loginResp.json();
+                            if (loginResult.status === 'success') {
+                                add('system', '✅ Login successful! You can now use the assistant.');
+                                updateLoginStatus(true);
+                                cfgDlg.close();
+                            } else {
+                                add('system', '⚠️ Login failed: ' + (loginResult.message || 'Unknown error'));
+                            }
                         } else {
                             add('system', '⚠️ Failed to set credentials: ' + (result.message || 'Unknown error'));
                         }

@@ -59,9 +59,12 @@ class OpenAPIMCPServer:
         self.api_tools: Dict[str, APITool] = {}
         self.sessions: Dict[str, requests.Session] = {}
         
-        # Authentication credentials (set once, used automatically)
-        self.auth_credentials: Dict[str, Dict[str, str]] = {}
-        self.auto_login_enabled = True
+        # Simple authentication - store credentials globally
+        self.username: Optional[str] = None
+        self.password: Optional[str] = None
+        self.api_key_name: Optional[str] = None
+        self.api_key_value: Optional[str] = None
+        self.login_url: Optional[str] = None
 
         os.makedirs(self.openapi_dir, exist_ok=True)
 
@@ -72,50 +75,43 @@ class OpenAPIMCPServer:
         self._auto_load_openapi_specs()
 
     # ---------------------- AUTHENTICATION MANAGEMENT ----------------------
-    def set_credentials(self, spec_name: str, username: str, password: str, 
-                       api_key_name: Optional[str] = None, api_key_value: Optional[str] = None):
-        """Set credentials for automatic authentication."""
-        self.auth_credentials[spec_name] = {
-            "username": username,
-            "password": password,
-            "api_key_name": api_key_name,
-            "api_key_value": api_key_value
-        }
-        logger.info(f"Credentials set for {spec_name}")
 
-    def has_valid_session(self, spec_name: str) -> bool:
-        """Check if we have a valid session for the spec."""
-        if spec_name not in self.sessions:
-            return False
-        session = self.sessions[spec_name]
-        # Check if JSESSIONID exists and is not expired
-        jsessionid = session.cookies.get("JSESSIONID")
-        return jsessionid is not None and jsessionid != "dummy_session_id"
 
-    def ensure_authenticated(self, spec_name: str) -> bool:
+    def set_credentials(self, username: str, password: str, 
+                       api_key_name: Optional[str] = None, api_key_value: Optional[str] = None,
+                       login_url: Optional[str] = None):
+        """Set credentials for authentication."""
+        self.username = username
+        self.password = password
+        self.api_key_name = api_key_name
+        self.api_key_value = api_key_value
+        self.login_url = login_url
+        logger.info("Credentials set for authentication")
+
+    def has_valid_session(self) -> bool:
+        """Check if we have a valid session."""
+        # Check if any session has a valid JSESSIONID
+        for session in self.sessions.values():
+            jsessionid = session.cookies.get("JSESSIONID")
+            if jsessionid and jsessionid != "dummy_session_id":
+                return True
+        return False
+
+    def ensure_authenticated(self) -> bool:
         """Ensure we have a valid session, auto-login if needed."""
-        if self.has_valid_session(spec_name):
+        if self.has_valid_session():
             return True
         
-        if not self.auto_login_enabled:
-            return False
-            
-        if spec_name not in self.auth_credentials:
-            logger.warning(f"No credentials set for {spec_name}")
+        if not self.username or not self.password:
+            logger.warning("No credentials set for authentication")
             return False
             
         try:
-            creds = self.auth_credentials[spec_name]
-            self.login_and_get_session(
-                spec_name=spec_name,
-                username=creds["username"],
-                password=creds["password"],
-                api_key_name=creds.get("api_key_name"),
-                api_key_value=creds.get("api_key_value")
-            )
-            return self.has_valid_session(spec_name)
+            # Use the login tool to authenticate
+            login_result = self._perform_login()
+            return login_result.get("status") == "success"
         except Exception as e:
-            logger.error(f"Auto-login failed for {spec_name}: {e}")
+            logger.error(f"Auto-login failed: {e}")
             return False
 
     def _save_token(self, token: str):
@@ -139,6 +135,77 @@ class OpenAPIMCPServer:
         credentials = f"{username}:{password}"
         encoded = base64.b64encode(credentials.encode()).decode()
         return f"Basic {encoded}"
+
+    def _perform_login(self) -> Dict[str, Any]:
+        """Perform login using Basic Auth and return session status."""
+        cached_token = self._load_token()
+        session = requests.Session()
+
+        if cached_token:
+            logger.info("✅ Using cached JSESSIONID")
+            session.cookies.set("JSESSIONID", cached_token)
+            # Set session for all specs
+            for spec_name in self.api_specs.keys():
+                self.sessions[spec_name] = session
+            return {
+                "status": "success",
+                "message": "Using cached JSESSIONID.",
+                "token": cached_token
+            }
+
+        if not self.username or not self.password:
+            return {"status": "error", "message": "No credentials set. Use set_credentials first."}
+
+        # Determine login URL
+        login_url = self.login_url
+        if not login_url:
+            # Use first spec's base URL + /login
+            if self.api_specs:
+                first_spec = list(self.api_specs.values())[0]
+                login_url = first_spec.base_url.rstrip('/') + '/login'
+            else:
+                return {"status": "error", "message": "No API specs loaded and no login URL set."}
+
+        logger.info(f"🔐 Performing Basic Auth login to {login_url}...")
+
+        headers = {
+            "Authorization": self._get_basic_auth_header(self.username, self.password),
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+        if self.api_key_name and self.api_key_value:
+            headers[self.api_key_name] = self.api_key_value
+
+        try:
+            resp = session.post(login_url, headers=headers, cookies=session.cookies, verify=False)
+            resp.raise_for_status()
+
+            token = None
+            if "set-cookie" in resp.headers:
+                match = re.search(r'JSESSIONID=([^;]+)', resp.headers["set-cookie"])
+                if match:
+                    token = match.group(1)
+
+            if not token:
+                return {"status": "error", "message": "No JSESSIONID found in login response."}
+
+            self._save_token(token)
+            logger.info(f"✅ JSESSIONID obtained: {token}")
+            
+            # Set session for all specs
+            for spec_name in self.api_specs.keys():
+                self.sessions[spec_name] = session
+                
+            return {
+                "status": "success",
+                "message": "Login successful",
+                "token": token
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Login failed: {e}")
+            return {"status": "error", "message": f"Login failed: {str(e)}"}
 
     def login_and_get_session(self, spec_name: str, username: str, password: str,
                               api_key_name: Optional[str] = None,
@@ -289,11 +356,11 @@ class OpenAPIMCPServer:
                 body_data[name] = value
 
         # Ensure we have a valid session (auto-login if needed)
-        if not self.ensure_authenticated(tool.spec_name):
+        if not self.ensure_authenticated():
             return {
                 "status": "auth_required",
-                "message": f"Authentication required for {tool.spec_name}. Please set credentials first.",
-                "spec_name": tool.spec_name
+                "message": "Authentication required. Please set credentials and login first.",
+                "hint": "Use set_credentials() then login()"
             }
 
         auto_mock = bool(os.getenv('AUTO_MOCK_FALLBACK'))
@@ -416,11 +483,9 @@ class OpenAPIMCPServer:
         self._core_set_session = _core_set_session
         self._core_clear_session = _core_clear_session
 
-        @self.mcp.tool(description="Log in and store configuration for API calls.")
-        def login(username: str, password: str, spec_name: Optional[str] = None,
-                  api_key_name: Optional[str] = None, api_key_value: Optional[str] = None,
-                  login_path: Optional[str] = None):
-            return _core_login(username, password, spec_name, api_key_name, api_key_value, login_path)
+        @self.mcp.tool(description="Login using Basic Auth and return session status.")
+        def login():
+            return self._perform_login()
 
         @self.mcp.tool(description="Reload OpenAPI specifications from disk.")
         def reload_openapi_specs():
@@ -452,21 +517,14 @@ class OpenAPIMCPServer:
         def clear_session_cookie(spec_name: Optional[str] = None):
             return _core_clear_session(spec_name)
 
-        @self.mcp.tool(description="Set credentials for automatic authentication. Once set, all API calls will automatically login when needed.")
-        def set_credentials(username: str, password: str, spec_name: Optional[str] = None,
-                          api_key_name: Optional[str] = None, api_key_value: Optional[str] = None):
-            if not self.api_specs:
-                return {"status": "error", "message": "No API specs loaded"}
-            if spec_name is None:
-                spec_name = sorted(self.api_specs.keys())[0]
-            if spec_name not in self.api_specs:
-                return {"status": "error", "message": f"Unknown spec '{spec_name}'"}
-            
-            self.set_credentials(spec_name, username, password, api_key_name, api_key_value)
+        @self.mcp.tool(description="Set credentials for authentication. Once set, use login() to authenticate.")
+        def set_credentials(username: str, password: str, api_key_name: Optional[str] = None, 
+                          api_key_value: Optional[str] = None, login_url: Optional[str] = None):
+            self.set_credentials(username, password, api_key_name, api_key_value, login_url)
             return {
                 "status": "success", 
-                "message": f"Credentials set for {spec_name}. API calls will now auto-authenticate.",
-                "spec_name": spec_name
+                "message": "Credentials set. Use login() to authenticate.",
+                "username": username
             }
 
 

@@ -24,11 +24,16 @@ async def test_new_mcp():
         
         # Test 2: Set credentials
         print("\n2. Testing credential setting...")
-        result = await client.set_credentials("testuser", "testpass", "cash_api")
+        result = await client.set_credentials("testuser", "testpass")
         print(f"✅ Credentials set: {result.get('status')}")
         
-        # Test 3: Execute a simple query
-        print("\n3. Testing query execution...")
+        # Test 3: Login
+        print("\n3. Testing login...")
+        result = await client.login()
+        print(f"✅ Login: {result.get('status')}")
+        
+        # Test 4: Execute a simple query
+        print("\n4. Testing query execution...")
         result = await client.execute_query("Show me pending payments")
         print(f"✅ Query executed: {result.get('status')}")
         if result.get('answer'):
