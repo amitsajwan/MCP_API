@@ -299,7 +299,7 @@ class OpenAPIMCPServer:
             return {
                 "status": "auth_required",
                 "message": "Authentication required. Please set credentials and login first.",
-                "hint": "Use set_credentials() then login()"
+                "hint": "Use set_credentials_tool() then login()"
             }
 
         auto_mock = bool(os.getenv('AUTO_MOCK_FALLBACK'))
@@ -385,7 +385,7 @@ class OpenAPIMCPServer:
 
 
         @self.mcp.tool(description="Set credentials for authentication. Once set, use login() to authenticate.")
-        def set_credentials(username: str, password: str, api_key_name: Optional[str] = None, 
+        def set_credentials_tool(username: str, password: str, api_key_name: Optional[str] = None, 
                           api_key_value: Optional[str] = None, login_url: Optional[str] = None):
             self.set_credentials(username, password, api_key_name, api_key_value, login_url)
             return {
@@ -649,6 +649,28 @@ async def call_tool(tool_name: str, body: dict):
         for name, t in server.api_tools.items():
             grouped.setdefault(t.spec_name, []).append(name)
         return {"status": "success", "count": len(server.api_tools), "grouped": grouped}
+    if tool_name == "set_credentials_tool":
+        try:
+            server.set_credentials(
+                username=args.get("username"),
+                password=args.get("password"),
+                api_key_name=args.get("api_key_name"),
+                api_key_value=args.get("api_key_value"),
+                login_url=args.get("login_url")
+            )
+            return {
+                "status": "success", 
+                "message": "Credentials set. Use login() to authenticate.",
+                "username": args.get("username")
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+    if tool_name == "login":
+        try:
+            result = server._perform_login()
+            return result
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     # Session helpers
     if tool_name == "set_session_cookie" and hasattr(server, "_core_set_session"):
