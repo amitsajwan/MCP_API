@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-MCP LLM Client - Proper MCP Client with LLM Planning
+MCP LLM Client - Proper MCP Client with Function Calling
 
 This client follows the real-world MCP pattern where:
 1. MCP Server provides tools only
-2. MCP Client does LLM planning and orchestration
+2. MCP Client does LLM planning and orchestration with function calling
 3. Client handles authentication flow automatically
+4. LLM can directly call tools using function calling (like Anthropic/OpenAI)
 """
 
 import asyncio
@@ -44,15 +45,16 @@ class MCPLLMClient:
         self.llm_model = llm_model
         self._session: Optional[aiohttp.ClientSession] = None
         
-                        # Initialize OpenAI client
-                self.openai_client = AsyncOpenAI(
-                    api_key=os.getenv('AZURE_OPENAI_API_KEY'),
-                    base_url=os.getenv('AZURE_OPENAI_ENDPOINT'),
-                    default_headers={'api-key': os.getenv('AZURE_OPENAI_API_KEY')}
-                )
+        # Initialize OpenAI client
+        self.openai_client = AsyncOpenAI(
+            api_key=os.getenv('AZURE_OPENAI_API_KEY'),
+            base_url=os.getenv('AZURE_OPENAI_ENDPOINT'),
+            default_headers={'api-key': os.getenv('AZURE_OPENAI_API_KEY')}
+        )
         
         # Cache for tools and results
         self.available_tools: List[Dict[str, Any]] = []
+        self.tool_metadata: Dict[str, Dict[str, Any]] = {}
         self.tool_results: Dict[str, Any] = {}
         
     async def _ensure_session(self):
@@ -78,6 +80,22 @@ class MCPLLMClient:
         except Exception as e:
             logger.error(f"Error listing tools: {e}")
             return []
+    
+    async def get_tool_metadata(self, tool_name: str) -> Dict[str, Any]:
+        """Get detailed metadata for a specific tool including parameters."""
+        await self._ensure_session()
+        try:
+            async with self._session.get(f"{self.mcp_server_url}/mcp/tool_meta/{tool_name}") as resp:
+                if resp.status == 200:
+                    metadata = await resp.json()
+                    self.tool_metadata[tool_name] = metadata
+                    return metadata
+                else:
+                    logger.error(f"Failed to get tool metadata for {tool_name}: HTTP {resp.status}")
+                    return {}
+        except Exception as e:
+            logger.error(f"Error getting tool metadata for {tool_name}: {e}")
+            return {}
     
     async def call_tool(self, tool_name: str, **kwargs) -> Dict[str, Any]:
         """Call a specific tool on the MCP server."""
@@ -114,162 +132,178 @@ class MCPLLMClient:
         """Login using Basic Auth and return session status."""
         return await self.call_tool("login")
     
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with available tools."""
-        tools_info = []
+    def _build_function_definitions(self) -> List[Dict[str, Any]]:
+        """Build OpenAI function definitions from available tools."""
+        functions = []
+        
         for tool in self.available_tools:
-            tools_info.append(f"- {tool['name']}: {tool['description']}")
+            tool_name = tool['name']
+            description = tool['description']
+            
+            # Get metadata if available
+            metadata = self.tool_metadata.get(tool_name, {})
+            parameters = metadata.get('parameters', [])
+            
+            # Build properties and required fields
+            properties = {}
+            required = []
+            
+            for param in parameters:
+                param_name = param.get('name', '')
+                param_type = param.get('type', 'string')
+                param_desc = param.get('description', '')
+                param_required = param.get('required', False)
+                
+                if param_name:
+                    properties[param_name] = {
+                        "type": param_type,
+                        "description": param_desc
+                    }
+                    if param_required:
+                        required.append(param_name)
+            
+            function_def = {
+                "name": tool_name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                }
+            }
+            functions.append(function_def)
         
-        return f"""You are an intelligent assistant that can call MCP server tools to help users.
-
-Available MCP server tools:
-{chr(10).join(tools_info)}
-
-Instructions:
-1. Analyze the user's request and determine which MCP server tools to call
-2. Call MCP server tools in the correct order to fulfill the request
-3. Use results from previous MCP server tools as inputs to subsequent tools when needed
-4. Handle authentication: if a tool fails with auth_required, call set_credentials_tool() then login()
-5. Provide a natural language summary of the results
-
-Tool calling format:
-- Use the exact tool names from the MCP server tools list above
-- Provide all required parameters
-- Handle authentication errors by calling set_credentials_tool() then login()
-- NEVER call external APIs directly - only use MCP server tools
-
-Example workflow:
-1. User asks for "pending payments"
-2. If auth_required, call set_credentials_tool() then login()
-3. Call cash_api_getPayments MCP server tool with status=pending
-4. Summarize the results in natural language
-
-Remember: You ONLY call MCP server tools, never external APIs directly."""
+        return functions
     
-    async def _plan_tool_calls(self, user_query: str) -> List[ToolCall]:
-        """Use LLM to plan which tools to call."""
-        system_prompt = self._build_system_prompt()
-        
-        try:
-            response = await self.openai_client.chat.completions.create(
-                model=self.llm_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Plan the tool calls needed for: {user_query}"}
-                ],
-                temperature=0.1,
-                max_tokens=1000
-            )
-            
-            # Parse the response to extract tool calls
-            content = response.choices[0].message.content
-            logger.info(f"LLM planning response: {content}")
-            
-            # Simple parsing - in a real implementation, you'd want more sophisticated parsing
-            # For now, we'll use a basic approach
-            tool_calls = []
-            
-            # Look for tool names in the response
-            for tool in self.available_tools:
-                if tool['name'].lower() in content.lower():
-                    # Extract parameters from the response
-                    args = {}
-                    if 'status=' in content:
-                        args['status'] = 'pending'  # Default for payment queries
-                    
-                    tool_calls.append(ToolCall(
-                        tool_name=tool['name'],
-                        arguments=args,
-                        reason=f"Detected {tool['name']} in query"
-                    ))
-            
-            return tool_calls
-            
-        except Exception as e:
-            logger.error(f"Error in LLM planning: {e}")
-            return []
-    
-    async def execute_query(self, user_query: str) -> Dict[str, Any]:
-        """Execute a user query using LLM planning and tool execution."""
-        logger.info(f"Executing query: {user_query}")
+    async def execute_query_with_function_calling(self, user_query: str) -> Dict[str, Any]:
+        """Execute a user query using OpenAI function calling."""
+        logger.info(f"Executing query with function calling: {user_query}")
         
         # Get available tools if not cached
         if not self.available_tools:
             await self.list_tools()
         
-        # Plan tool calls
-        tool_calls = await self._plan_tool_calls(user_query)
-        logger.info(f"Planned {len(tool_calls)} tool calls")
+        # Get metadata for all tools
+        for tool in self.available_tools:
+            await self.get_tool_metadata(tool['name'])
         
-        results = []
-        final_answer = ""
+        # Build function definitions
+        functions = self._build_function_definitions()
+        logger.info(f"Built {len(functions)} function definitions")
         
-        for tool_call in tool_calls:
-            try:
-                logger.info(f"Executing {tool_call.tool_name} with args: {tool_call.arguments}")
-                result = await self.call_tool(tool_call.tool_name, **tool_call.arguments)
-                
-                # Handle authentication errors
-                if result.get("status") == "auth_required":
-                    logger.info("Authentication required, prompting for credentials")
-                    return {
-                        "status": "auth_required",
-                        "message": "Please set credentials first using set_credentials_tool",
-                        "spec_name": result.get("spec_name")
-                    }
-                
-                results.append(ToolResult(
-                    tool_name=tool_call.tool_name,
-                    success=result.get("status") == "success",
-                    result=result,
-                    error=result.get("message") if result.get("status") != "success" else None
-                ))
-                
-            except Exception as e:
-                logger.error(f"Error executing {tool_call.tool_name}: {e}")
-                results.append(ToolResult(
-                    tool_name=tool_call.tool_name,
-                    success=False,
-                    result=None,
-                    error=str(e)
-                ))
+        # Prepare messages
+        messages = [
+            {
+                "role": "system", 
+                "content": """You are an intelligent assistant that can call MCP server tools to help users.
+
+Available tools are provided as functions. You can call these functions directly to:
+1. Get data from APIs (payments, transactions, securities, etc.)
+2. Handle authentication when needed
+3. Provide comprehensive answers based on the data
+
+Instructions:
+- Analyze the user's request and call appropriate functions
+- If authentication is required, call set_credentials_tool() then login()
+- Use the results to provide a natural language answer
+- Handle errors gracefully and suggest solutions
+
+Remember: You have direct access to call any of the provided functions."""
+            },
+            {"role": "user", "content": user_query}
+        ]
         
-        # Generate final answer using LLM
-        if results:
-            final_answer = await self._generate_answer(user_query, results)
+        # Track tool calls and results
+        tool_calls_made = []
+        tool_results = []
         
-        return {
-            "status": "success",
-            "query": user_query,
-            "tool_calls": [{"tool": r.tool_name, "success": r.success, "error": r.error} for r in results],
-            "results": [r.result for r in results if r.success],
-            "answer": final_answer
-        }
-    
-    async def _generate_answer(self, user_query: str, results: List[ToolResult]) -> str:
-        """Generate a natural language answer from tool results."""
         try:
-            # Build context from successful results
-            context = []
-            for result in results:
-                if result.success and result.result:
-                    context.append(f"{result.tool_name}: {json.dumps(result.result, indent=2)}")
-            
+            # First call - let the model decide what to do
             response = await self.openai_client.chat.completions.create(
                 model=self.llm_model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant. Summarize the API results in natural language."},
-                    {"role": "user", "content": f"User asked: {user_query}\n\nResults:\n{chr(10).join(context)}\n\nProvide a clear, natural language summary:"}
-                ],
-                temperature=0.3,
-                max_tokens=500
+                messages=messages,
+                tools=functions,
+                tool_choice="auto",
+                temperature=0.1,
+                max_tokens=2000
             )
             
-            return response.choices[0].message.content
+            response_message = response.choices[0].message
+            messages.append(response_message)
+            
+            # Handle tool calls if any
+            if response_message.tool_calls:
+                for tool_call in response_message.tool_calls:
+                    tool_name = tool_call.function.name
+                    arguments = json.loads(tool_call.function.arguments)
+                    
+                    logger.info(f"LLM calling tool: {tool_name} with args: {arguments}")
+                    tool_calls_made.append({
+                        "tool": tool_name,
+                        "arguments": arguments,
+                        "reason": "LLM function call"
+                    })
+                    
+                    # Execute the tool
+                    result = await self.call_tool(tool_name, **arguments)
+                    tool_results.append(ToolResult(
+                        tool_name=tool_name,
+                        success=result.get("status") == "success",
+                        result=result,
+                        error=result.get("message") if result.get("status") != "success" else None
+                    ))
+                    
+                    # Handle authentication errors
+                    if result.get("status") == "auth_required":
+                        logger.info("Authentication required, returning auth_required status")
+                        return {
+                            "status": "auth_required",
+                            "message": "Please set credentials first using set_credentials_tool",
+                            "spec_name": result.get("spec_name"),
+                            "tool_calls": tool_calls_made
+                        }
+                    
+                    # Add tool result to messages for next iteration
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(result, indent=2)
+                    })
+                
+                # Second call - let the model process the results
+                final_response = await self.openai_client.chat.completions.create(
+                    model=self.llm_model,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=1000
+                )
+                
+                final_answer = final_response.choices[0].message.content
+            else:
+                # No tool calls made, use the direct response
+                final_answer = response_message.content
+            
+            return {
+                "status": "success",
+                "query": user_query,
+                "tool_calls": tool_calls_made,
+                "results": [r.result for r in tool_results if r.success],
+                "answer": final_answer
+            }
             
         except Exception as e:
-            logger.error(f"Error generating answer: {e}")
-            return f"Query executed successfully. {len([r for r in results if r.success])} tools completed successfully."
+            logger.error(f"Error in function calling execution: {e}")
+            return {
+                "status": "error",
+                "query": user_query,
+                "message": str(e),
+                "tool_calls": tool_calls_made,
+                "results": [r.result for r in tool_results if r.success]
+            }
+    
+    async def execute_query(self, user_query: str) -> Dict[str, Any]:
+        """Execute a user query using function calling (preferred method)."""
+        return await self.execute_query_with_function_calling(user_query)
 
 
 # Example usage
