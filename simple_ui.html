@@ -191,14 +191,35 @@
                         environment: 'DEV'
                     };
                     try{
+                        // First save the configuration
+                        add('system', 'Saving configuration...');
                         const resp = await fetch('/configure', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
                         if(!resp.ok) throw new Error('HTTP '+resp.status);
-                        // optionally, update server spec base URLs so tools hit the same env
+                        
+                        // Update server spec base URLs so tools hit the same env
                         const mcpEndpoint = window.location.protocol + '//' + window.location.hostname + ':9000'; // Default MCP port
                         await fetch(`${mcpEndpoint}/mcp/spec_base_url`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({base_url: body.base_url})}).catch(()=>{});
-                        add('system', 'Configuration saved successfully! You can now use the assistant.');
-                        updateLoginStatus(true);
-                        cfgDlg.close();
+                        
+                        // Test login by making a simple query to trigger authentication
+                        add('system', 'Testing login credentials...');
+                        const testResp = await fetch('/ask', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({message: 'test login', session_id: 'config_test'})
+                        });
+                        
+                        if (testResp.ok) {
+                            const testResult = await testResp.json();
+                            if (testResult.response && testResult.response.status !== 'error') {
+                                add('system', '✅ Login successful! Authentication token has been saved. You can now use the assistant.');
+                                updateLoginStatus(true);
+                                cfgDlg.close();
+                            } else {
+                                add('system', '⚠️ Configuration saved but login test failed. Please check your credentials.');
+                            }
+                        } else {
+                            add('system', '⚠️ Configuration saved but unable to test login. Please verify your credentials manually.');
+                        }
                     }catch(err){
                         add('assistant', 'Config error: '+err.message);
                     }
