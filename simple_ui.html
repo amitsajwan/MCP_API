@@ -221,39 +221,21 @@
                     const body = {
                         username: cfgUser.value.trim(),
                         password: cfgPass.value,
-                        base_url: cfgBase.value.trim(),
-                        login_path: cfgLoginPath.value.trim() || '/login',
-                        environment: 'DEV'
+                        spec_name: null // Will use default spec
                     };
                     try{
-                        // First save the configuration
-                        add('system', 'Saving configuration...');
-                        const resp = await fetch('/configure', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+                        // Set credentials for automatic authentication
+                        add('system', 'Setting credentials for automatic authentication...');
+                        const resp = await fetch('/credentials', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
                         if(!resp.ok) throw new Error('HTTP '+resp.status);
                         
-                        // Update server spec base URLs so tools hit the same env
-                        const mcpEndpoint = window.location.protocol + '//' + window.location.hostname + ':9000'; // Default MCP port
-                        await fetch(`${mcpEndpoint}/mcp/spec_base_url`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({base_url: body.base_url})}).catch(()=>{});
-                        
-                        // Test login by making a simple query to trigger authentication
-                        add('system', 'Testing login credentials...');
-                        const testResp = await fetch('/ask', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({message: 'test login', session_id: 'config_test'})
-                        });
-                        
-                        if (testResp.ok) {
-                            const testResult = await testResp.json();
-                            if (testResult.response && testResult.response.status !== 'error') {
-                                add('system', '✅ Login successful! Authentication token has been saved. You can now use the assistant.');
-                                updateLoginStatus(true);
-                                cfgDlg.close();
-                            } else {
-                                add('system', '⚠️ Configuration saved but login test failed. Please check your credentials.');
-                            }
+                        const result = await resp.json();
+                        if (result.status === 'success') {
+                            add('system', '✅ Credentials set successfully! API calls will now auto-authenticate.');
+                            updateLoginStatus(true);
+                            cfgDlg.close();
                         } else {
-                            add('system', '⚠️ Configuration saved but unable to test login. Please verify your credentials manually.');
+                            add('system', '⚠️ Failed to set credentials: ' + (result.message || 'Unknown error'));
                         }
                     }catch(err){
                         add('assistant', 'Config error: '+err.message);

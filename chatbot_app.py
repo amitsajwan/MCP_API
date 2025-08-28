@@ -28,7 +28,7 @@ if os.environ.get('AZURE_OPENAI_ENDPOINT'):
 else:
     logging.getLogger('chatbot_app').info('AZURE_OPENAI_ENDPOINT not set for chatbot_app (will use fallback summaries).')
 
-from fastmcp_client import ChatbotFastMCPClient
+from mcp_llm_client import MCPLLMClient
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chatbot_app")
@@ -62,7 +62,7 @@ app.add_middleware(
 )
 
 # global client
-mcp_client: Optional[ChatbotFastMCPClient] = None
+mcp_client: Optional[MCPLLMClient] = None
 
 # simple in-memory session store
 sessions: Dict[str, Dict[str, Any]] = {}
@@ -101,8 +101,12 @@ class AssistantResponse(BaseModel):
     plan: List[Dict[str, Any]]
     executions: Optional[List[Dict[str, Any]]] = None
     answer: Optional[str] = None
-    # For simple UI compatibility (expects `response` like ChatResponse)
     response: Optional[Any] = None
+
+class CredentialsRequest(BaseModel):
+    username: str
+    password: str
+    spec_name: Optional[str] = None
 
 
 class ConfigurationRequest(BaseModel):
@@ -116,13 +120,14 @@ class ConfigurationRequest(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     global mcp_client
-    logger.info("Starting app and creating MCP HTTP client...")
+    logger.info("Starting app and creating MCP LLM client...")
     mcp_server_endpoint = os.getenv('MCP_SERVER_ENDPOINT', 'http://localhost:9000')
-    mcp_client = ChatbotFastMCPClient(server_url=f"{mcp_server_endpoint}/mcp")
+    mcp_client = MCPLLMClient(mcp_server_endpoint)
     try:
-        ok = await mcp_client.health_check()
-        if ok:
-            logger.info("Connected to MCP server (HTTP).")
+        # Test connection by listing tools
+        tools = await mcp_client.list_tools()
+        if tools:
+            logger.info(f"Connected to MCP server. Found {len(tools)} tools.")
         else:
             logger.warning(f"MCP server not reachable at startup ({mcp_server_endpoint}).")
     except Exception as e:
@@ -549,9 +554,27 @@ async def chat_endpoint(req: ChatRequest):
 
 
 
+@app.post('/credentials', response_model=Dict[str, Any])
+async def set_credentials(req: CredentialsRequest):
+    """Set credentials for automatic authentication."""
+    global mcp_client
+    if not mcp_client:
+        raise HTTPException(status_code=503, detail='MCP client not initialized')
+    
+    try:
+        result = await mcp_client.set_credentials(
+            username=req.username,
+            password=req.password,
+            spec_name=req.spec_name
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Set credentials error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post('/assistant/chat', response_model=AssistantResponse)
 async def assistant_chat(req: AssistantRequest):
-    """Single-agent flow: delegate planning+execution to the LLM agent and return its answer."""
+    """Execute user query using MCP LLM client with automatic planning and tool execution."""
     global mcp_client
     if not mcp_client:
         raise HTTPException(status_code=503, detail='MCP client not initialized')
@@ -561,24 +584,34 @@ async def assistant_chat(req: AssistantRequest):
     session['conversation_history'].append({'role': 'user', 'content': req.message, 'timestamp': datetime.now().isoformat()})
 
     try:
-        # Call the MCP server's agent endpoint
-        agent_response = await mcp_client.call_llm_agent(req.message)
+        # Execute query using MCP LLM client
+        result = await mcp_client.execute_query(req.message)
         
-        if agent_response.get('status') == 'error':
-            raise HTTPException(status_code=500, detail=agent_response.get('message', 'Agent execution failed'))
+        if result.get('status') == 'auth_required':
+            # Handle authentication requirement
+            return AssistantResponse(
+                mode="auth_required",
+                message=req.message,
+                session_id=session_id,
+                answer=f"Authentication required: {result.get('message')}",
+                response=result
+            )
+        
+        if result.get('status') == 'error':
+            raise HTTPException(status_code=500, detail=result.get('message', 'Query execution failed'))
         
         # Record assistant answer to session
-        answer = agent_response.get('answer', 'No answer provided.')
+        answer = result.get('answer', 'No answer provided.')
         session['conversation_history'].append({'role': 'assistant', 'content': answer, 'timestamp': datetime.now().isoformat()})
         
         return AssistantResponse(
             mode="assistant",
             message=req.message,
             session_id=session_id,
-            plan=agent_response.get('plan', {}),
-            executions=agent_response.get('executions', []),
+            plan=result.get('tool_calls', []),
+            executions=result.get('results', []),
             answer=answer,
-            response=agent_response
+            response=result
         )
     except HTTPException:
         raise

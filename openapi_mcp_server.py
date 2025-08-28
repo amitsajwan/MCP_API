@@ -58,6 +58,10 @@ class OpenAPIMCPServer:
         self.api_specs: Dict[str, APISpec] = {}
         self.api_tools: Dict[str, APITool] = {}
         self.sessions: Dict[str, requests.Session] = {}
+        
+        # Authentication credentials (set once, used automatically)
+        self.auth_credentials: Dict[str, Dict[str, str]] = {}
+        self.auto_login_enabled = True
 
         os.makedirs(self.openapi_dir, exist_ok=True)
 
@@ -67,7 +71,53 @@ class OpenAPIMCPServer:
         # Auto-load specs
         self._auto_load_openapi_specs()
 
-    # ---------------------- LOGIN / SESSION ----------------------
+    # ---------------------- AUTHENTICATION MANAGEMENT ----------------------
+    def set_credentials(self, spec_name: str, username: str, password: str, 
+                       api_key_name: Optional[str] = None, api_key_value: Optional[str] = None):
+        """Set credentials for automatic authentication."""
+        self.auth_credentials[spec_name] = {
+            "username": username,
+            "password": password,
+            "api_key_name": api_key_name,
+            "api_key_value": api_key_value
+        }
+        logger.info(f"Credentials set for {spec_name}")
+
+    def has_valid_session(self, spec_name: str) -> bool:
+        """Check if we have a valid session for the spec."""
+        if spec_name not in self.sessions:
+            return False
+        session = self.sessions[spec_name]
+        # Check if JSESSIONID exists and is not expired
+        jsessionid = session.cookies.get("JSESSIONID")
+        return jsessionid is not None and jsessionid != "dummy_session_id"
+
+    def ensure_authenticated(self, spec_name: str) -> bool:
+        """Ensure we have a valid session, auto-login if needed."""
+        if self.has_valid_session(spec_name):
+            return True
+        
+        if not self.auto_login_enabled:
+            return False
+            
+        if spec_name not in self.auth_credentials:
+            logger.warning(f"No credentials set for {spec_name}")
+            return False
+            
+        try:
+            creds = self.auth_credentials[spec_name]
+            self.login_and_get_session(
+                spec_name=spec_name,
+                username=creds["username"],
+                password=creds["password"],
+                api_key_name=creds.get("api_key_name"),
+                api_key_value=creds.get("api_key_value")
+            )
+            return self.has_valid_session(spec_name)
+        except Exception as e:
+            logger.error(f"Auto-login failed for {spec_name}: {e}")
+            return False
+
     def _save_token(self, token: str):
         with open("token_cache.txt", "w") as f:
             f.write(token)
@@ -238,14 +288,13 @@ class OpenAPIMCPServer:
             elif location == "body":
                 body_data[name] = value
 
-        # If we already have a cached JSESSIONID and session doesn't, pre-seed it so auth just works
-        try:
-            if "JSESSIONID" not in session.cookies.get_dict():
-                cached = self._load_token()
-                if cached:
-                    session.cookies.set("JSESSIONID", cached)
-        except Exception:
-            pass
+        # Ensure we have a valid session (auto-login if needed)
+        if not self.ensure_authenticated(tool.spec_name):
+            return {
+                "status": "auth_required",
+                "message": f"Authentication required for {tool.spec_name}. Please set credentials first.",
+                "spec_name": tool.spec_name
+            }
 
         auto_mock = bool(os.getenv('AUTO_MOCK_FALLBACK'))
         mock_base = os.getenv('MOCK_API_BASE_URL', 'http://localhost:9001').rstrip('/')
@@ -403,6 +452,23 @@ class OpenAPIMCPServer:
         def clear_session_cookie(spec_name: Optional[str] = None):
             return _core_clear_session(spec_name)
 
+        @self.mcp.tool(description="Set credentials for automatic authentication. Once set, all API calls will automatically login when needed.")
+        def set_credentials(username: str, password: str, spec_name: Optional[str] = None,
+                          api_key_name: Optional[str] = None, api_key_value: Optional[str] = None):
+            if not self.api_specs:
+                return {"status": "error", "message": "No API specs loaded"}
+            if spec_name is None:
+                spec_name = sorted(self.api_specs.keys())[0]
+            if spec_name not in self.api_specs:
+                return {"status": "error", "message": f"Unknown spec '{spec_name}'"}
+            
+            self.set_credentials(spec_name, username, password, api_key_name, api_key_value)
+            return {
+                "status": "success", 
+                "message": f"Credentials set for {spec_name}. API calls will now auto-authenticate.",
+                "spec_name": spec_name
+            }
+
 
     def _generate_tools_from_spec(self, api_spec: APISpec) -> int:
         spec = api_spec.spec
@@ -431,6 +497,7 @@ class OpenAPIMCPServer:
                 description = details.get("description", "")
                 tags        = details.get("tags", [])
                 full_desc   = (summary + " - " + description).strip(" - ") or f"{method.upper()} {path}"
+                full_desc += f" (Auto-authenticates with {api_spec.name} credentials)"
 
                 parameters: Dict[str, Any] = {}
                 for param in details.get("parameters", []):
@@ -510,13 +577,8 @@ async def access_log(request: Request, call_next):
 OPENAPI_DIR = os.getenv("OPENAPI_DIR", "./openapi_specs")
 server = OpenAPIMCPServer(openapi_dir=OPENAPI_DIR)
 
-# Optionally expose LLM planning routes (used by chatbot to get a plan-only dry run)
-try:
-    import llm_mcp_bridge
-    app.include_router(llm_mcp_bridge.router)
-    logger.info("LLM router mounted at /llm (planning endpoints enabled)")
-except Exception as e:
-    logger.warning("LLM router not mounted (%s). Proceeding without /llm endpoints.", e)
+# Pure MCP server - no LLM planning logic
+logger.info("Pure MCP server running - tools only, no LLM planning")
 
 @app.get("/mcp/tools")
 async def list_tools():

@@ -8,3 +8,4 @@ python-dotenv
 fastmcp
 openai
 azure-identity
+openai>=1.0.0
