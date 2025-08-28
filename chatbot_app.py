@@ -197,8 +197,6 @@ async def simple_ui():
         <body>
             <header>API Assistant (Simple)</header>
             <div class='toolbar'>
-                <label><input type='checkbox' id='assistant' checked/> Assistant Auto Tools</label>
-                <label>Max Tools <input type='number' id='maxTools' min='1' max='5' value='1' style='width:60px;'/></label>
                 <span class='small'>Type a prompt like: <code>pending payments status=pending</code> or <code>cash summary</code></span>
                 <span id='status'>Idle</span>
                 <button id='cfgBtn' style='margin-left:auto'>Configure</button>
@@ -227,22 +225,14 @@ async def simple_ui():
                 const logEl = document.getElementById('log');
                 const form = document.getElementById('chatForm');
                 const input = document.getElementById('input');
-                const assistantToggle = document.getElementById('assistant');
-                const maxTools = document.getElementById('maxTools');
                 const statusEl = document.getElementById('status');
                 const sendBtn = document.getElementById('sendBtn');
-                const planBtn = document.getElementById('planBtn');
                 const cfgBtn = document.getElementById('cfgBtn');
                 const cfgDlg = document.getElementById('cfgDlg');
                 const cfgForm = document.getElementById('cfgForm');
                 const cfgUser = document.getElementById('cfgUser');
                 const cfgPass = document.getElementById('cfgPass');
                 const cfgBase = document.getElementById('cfgBase');
-                const planContainer = document.getElementById('planContainer');
-                const planSummary = document.getElementById('planSummary');
-                const executePlanBtn = document.getElementById('executePlanBtn');
-                const cancelPlanBtn = document.getElementById('cancelPlanBtn');
-                const hidePlanBtn = document.getElementById('hidePlanBtn');
                 
                 // Surface JS errors in the UI so users see why nothing appears
                 function logErrorToUI(text){
@@ -354,20 +344,12 @@ async def simple_ui():
                     const body = {
                         message,
                         auto_execute: true,
-                        max_tools: parseInt(maxTools.value)||1
+                        max_tools: 3
                     };
                     const resp = await fetch('/assistant/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
                     if(!resp.ok) throw new Error('HTTP '+resp.status);
                         return resp.json();
                 }
-                async function callChat(message){
-                    const body = {message};
-                    const resp = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-                    if(!resp.ok) throw new Error('HTTP '+resp.status);
-                    return resp.json();
-                }
-                
-
 
                 form.addEventListener('submit', async (e)=>{
                     e.preventDefault();
@@ -377,20 +359,13 @@ async def simple_ui():
                     add('user', text);
                     statusEl.textContent = 'Thinking…';
                     sendBtn.disabled = true;
-                    planBtn.disabled = true;
                     try {
-                        let result;
-                        if(assistantToggle.checked){
-                            result = await callAssistant(text);
-                        } else {
-                            result = await callChat(text); // returns ChatResponse shape
-                        }
+                        let result = await callAssistant(text);
                         add('assistant', result);
                     } catch(err){
                         add('assistant', 'Error: '+ err.message);
                     } finally {
                         sendBtn.disabled = false;
-                        planBtn.disabled = false;
                         statusEl.textContent = 'Idle';
                         input.focus();
                     }
@@ -401,12 +376,7 @@ async def simple_ui():
         """
         return HTMLResponse(content=html)
 
-@app.get("/quick_actions")
-async def quick_actions():
-    """Return a curated list of tools to display as quick actions (currently all tools)."""
-    result = await get_tools()  # reuse existing logic
-    # Could add filtering / sorting later
-    return result
+
 
 @app.get("/tool_meta/{tool_name}")
 async def get_tool_meta(tool_name: str):
