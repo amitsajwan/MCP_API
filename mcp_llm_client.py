@@ -104,7 +104,7 @@ class MCPLLMClient:
     async def set_credentials(self, username: str, password: str, api_key_name: Optional[str] = None, 
                             api_key_value: Optional[str] = None, login_url: Optional[str] = None) -> Dict[str, Any]:
         """Set credentials for authentication."""
-        return await self.call_tool("set_credentials", 
+        return await self.call_tool("set_credentials_tool", 
                                    username=username, 
                                    password=password, 
                                    api_key_name=api_key_name,
@@ -130,18 +130,18 @@ Instructions:
 1. Analyze the user's request and determine which MCP server tools to call
 2. Call MCP server tools in the correct order to fulfill the request
 3. Use results from previous MCP server tools as inputs to subsequent tools when needed
-4. Handle authentication: if a tool fails with auth_required, call set_credentials() then login()
+4. Handle authentication: if a tool fails with auth_required, call set_credentials_tool() then login()
 5. Provide a natural language summary of the results
 
 Tool calling format:
 - Use the exact tool names from the MCP server tools list above
 - Provide all required parameters
-- Handle authentication errors by calling set_credentials() then login()
+- Handle authentication errors by calling set_credentials_tool() then login()
 - NEVER call external APIs directly - only use MCP server tools
 
 Example workflow:
 1. User asks for "pending payments"
-2. If auth_required, call set_credentials() then login()
+2. If auth_required, call set_credentials_tool() then login()
 3. Call cash_api_getPayments MCP server tool with status=pending
 4. Summarize the results in natural language
 
@@ -215,7 +215,7 @@ Remember: You ONLY call MCP server tools, never external APIs directly."""
                     logger.info("Authentication required, prompting for credentials")
                     return {
                         "status": "auth_required",
-                        "message": "Please set credentials first using set_credentials",
+                        "message": "Please set credentials first using set_credentials_tool",
                         "spec_name": result.get("spec_name")
                     }
                 
