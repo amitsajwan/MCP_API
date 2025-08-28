@@ -207,68 +207,7 @@ class OpenAPIMCPServer:
             logger.error(f"❌ Login failed: {e}")
             return {"status": "error", "message": f"Login failed: {str(e)}"}
 
-    def login_and_get_session(self, spec_name: str, username: str, password: str,
-                              api_key_name: Optional[str] = None,
-                              api_key_value: Optional[str] = None,
-                              login_path: Optional[str] = None) -> requests.Session:
-        spec = self.api_specs[spec_name]
-        session = requests.Session()
 
-        cached_token = self._load_token()
-        if cached_token:
-            logger.info("Using cached JSESSIONID...")
-            session.cookies.set("JSESSIONID", cached_token)
-            self.sessions[spec_name] = session
-            return session
-
-        # Resolve login URL; ignore empty env var
-        env_login = os.getenv("LOGIN_URL")
-        # Use provided login_path parameter, fallback to env var, then default
-        effective_login_path = login_path or os.getenv("LOGIN_PATH", "/login")
-        if env_login and env_login.strip():
-            login_url = env_login.strip()
-        else:
-            login_url = spec.base_url.rstrip('/') + effective_login_path
-        logger.info(f"Performing Basic Auth login to {login_url}")
-
-        try:
-            # Preflight
-            preflight_resp = session.get(login_url, verify=False)
-            preflight_resp.raise_for_status()
-
-            headers = {
-                "Authorization": self._get_basic_auth_header(username, password),
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            }
-            if api_key_name and api_key_value:
-                headers[api_key_name] = api_key_value
-
-            resp = session.post(login_url, headers=headers, cookies=session.cookies, verify=False)
-            resp.raise_for_status()
-
-            token = None
-            if "set-cookie" in resp.headers:
-                match = re.search(r'JSESSIONID=([^;]+)', resp.headers["set-cookie"])
-                if match:
-                    token = match.group(1)
-
-            if not token:
-                raise RuntimeError("No JSESSIONID found in login response.")
-
-            self._save_token(token)
-            session.cookies.set("JSESSIONID", token)
-            logger.info(f"JSESSIONID obtained: {token}")
-            self.sessions[spec_name] = session
-            return session
-        except Exception as e:
-            # Robust fallback: simulate login but actually set/persist a dummy token so subsequent calls use it
-            dummy = "dummy_session_id"
-            self._save_token(dummy)
-            session.cookies.set("JSESSIONID", dummy)
-            self.sessions[spec_name] = session
-            logger.warning("Login failed, using simulated session cookie. Reason: %s", e)
-            return session
 
     # ---------------------- SPEC LOADING ----------------------
     def _validate_openapi_spec(self, spec: dict):
@@ -414,74 +353,8 @@ class OpenAPIMCPServer:
         return result
 
     def _register_core_tools(self):
-        # internal reusable login logic (not decorated) so HTTP route can call real callable
-        def _core_login(username: str, password: str, spec_name: Optional[str] = None,
-                        api_key_name: Optional[str] = None, api_key_value: Optional[str] = None,
-                        login_path: Optional[str] = None):
-            if not self.api_specs:
-                return {"status": "error", "message": "No API specs loaded"}
-            if spec_name is None:
-                spec_name = sorted(self.api_specs.keys())[0]
-            try:
-                session = self.login_and_get_session(spec_name, username, password, api_key_name, api_key_value, login_path)
-                cookies = session.cookies.get_dict()
-                cookie_value = next(iter(cookies.values()), "dummy_session_id")
-                return {
-                    "status": "success",
-                    "message": f"Logged in to {spec_name}",
-                    "cookies": cookies,
-                    "cookie": cookie_value
-                }
-            except Exception as e:
-                # fallback simulation
-                return {
-                    "status": "success",
-                    "message": f"Simulated login for {spec_name}",
-                    "cookie": "dummy_session_id",
-                    "error": str(e)
-                }
 
-        self._core_login = _core_login  # store reference
 
-        # Allow setting JSESSIONID directly (e.g., when obtained outside)
-        def _core_set_session(spec_name: Optional[str], jsessionid: str):
-            if not self.api_specs:
-                return {"status": "error", "message": "No API specs loaded"}
-            updated = []
-            if spec_name:
-                if spec_name not in self.sessions:
-                    return {"status": "error", "message": f"Unknown spec '{spec_name}'"}
-                self.sessions[spec_name].cookies.set("JSESSIONID", jsessionid)
-                updated.append(spec_name)
-            else:
-                for name, sess in self.sessions.items():
-                    sess.cookies.set("JSESSIONID", jsessionid)
-                    updated.append(name)
-            # persist so future sessions pick it up
-            self._save_token(jsessionid)
-            return {"status": "success", "message": "Session cookie set", "specs": updated}
-
-        def _core_clear_session(spec_name: Optional[str] = None):
-            cleared = []
-            if spec_name:
-                if spec_name in self.sessions:
-                    try:
-                        self.sessions[spec_name].cookies.clear(domain=None, path=None)
-                    except Exception:
-                        pass
-                    cleared.append(spec_name)
-            else:
-                for name, sess in self.sessions.items():
-                    try:
-                        sess.cookies.clear(domain=None, path=None)
-                    except Exception:
-                        pass
-                    cleared.append(name)
-            self._clear_token()
-            return {"status": "success", "message": "Session cleared", "specs": cleared}
-
-        self._core_set_session = _core_set_session
-        self._core_clear_session = _core_clear_session
 
         @self.mcp.tool(description="Login using Basic Auth and return session status.")
         def login():
@@ -509,13 +382,7 @@ class OpenAPIMCPServer:
                 grouped.setdefault(tool.spec_name, []).append(name)
             return {"status": "success", "count": len(self.api_tools), "grouped": grouped}
 
-        @self.mcp.tool(description="Set a JSESSIONID cookie for one or all specs so authenticated calls work without logging in here.")
-        def set_session_cookie(jsessionid: str, spec_name: Optional[str] = None):
-            return _core_set_session(spec_name, jsessionid)
 
-        @self.mcp.tool(description="Clear stored JSESSIONID and in-memory cookies.")
-        def clear_session_cookie(spec_name: Optional[str] = None):
-            return _core_clear_session(spec_name)
 
         @self.mcp.tool(description="Set credentials for authentication. Once set, use login() to authenticate.")
         def set_credentials(username: str, password: str, api_key_name: Optional[str] = None, 
