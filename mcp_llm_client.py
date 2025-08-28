@@ -44,13 +44,12 @@ class MCPLLMClient:
         self.llm_model = llm_model
         self._session: Optional[aiohttp.ClientSession] = None
         
-        # Initialize OpenAI client
-        self.openai_client = AsyncOpenAI(
-            api_key=os.getenv('OPENAI_API_KEY'),
-            base_url=os.getenv('AZURE_OPENAI_ENDPOINT'),
-            api_version=os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview'),
-            default_headers={'api-key': os.getenv('AZURE_OPENAI_API_KEY')}
-        )
+                        # Initialize OpenAI client
+                self.openai_client = AsyncOpenAI(
+                    api_key=os.getenv('AZURE_OPENAI_API_KEY'),
+                    base_url=os.getenv('AZURE_OPENAI_ENDPOINT'),
+                    default_headers={'api-key': os.getenv('AZURE_OPENAI_API_KEY')}
+                )
         
         # Cache for tools and results
         self.available_tools: List[Dict[str, Any]] = []
