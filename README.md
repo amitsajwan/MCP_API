@@ -150,24 +150,51 @@ MCP_API/
 └── tests/ (future)            # Placeholder for test suite
 ```
 
-## 🧪 Quick Smoke
+## 🚀 Getting Started
 
-### Quick Demo
+### Prerequisites
+1. Copy `.env.example` to `.env` and configure your settings:
+   ```bash
+   cp .env.example .env
+   ```
+2. Edit `.env` file with your Azure OpenAI credentials and desired server configurations
+
+### Quick Demo (All-in-One)
 ```bash
 python start_demo.py
 ```
 
-### Individual Testing
+### Manual Startup (Step-by-Step)
+
+#### 1. Start Mock API Server (Optional)
+If you want to test with mock APIs instead of real ones:
+```bash
+python mock_api_server.py
+```
+- Uses `MOCK_API_HOST` and `MOCK_API_PORT` from `.env` (defaults: 127.0.0.1:9001)
+- Set `FORCE_BASE_URL_CASH=http://localhost:9001` in `.env` to use mock APIs
+
+#### 2. Start MCP Server
 ```bash
 python openapi_mcp_server.py --transport http
+```
+- Uses `MCP_HOST` and `MCP_PORT` from `.env` (defaults: 127.0.0.1:9000)
+- Loads OpenAPI specs from `OPENAPI_DIR` (default: ./openapi_specs)
+- Exposes tools at `MCP_SERVER_ENDPOINT` (default: http://localhost:9000)
+
+#### 3. Start Chatbot Application
+```bash
 python chatbot_app.py
 ```
+- Uses `CHATBOT_HOST` and `CHATBOT_PORT` from `.env` (defaults: 0.0.0.0:9080)
+- Connects to MCP server using `MCP_SERVER_ENDPOINT` from `.env`
+- Access the web UI at: http://localhost:9080
 
-### Manual Testing
-1. Start MCP server: `python openapi_mcp_server.py --transport http`
-2. Start chatbot: `python chatbot_app.py`
-3. Open http://localhost:9080
-4. Use the React UI (dev: http://localhost:9517 or http://localhost:9518) or call /chat
+### Configuration Notes
+- **All server endpoints and ports are configured in `.env` file**
+- **Base URLs for APIs (mock/real) are set via `FORCE_BASE_URL_*` variables**
+- **MCP server endpoint is configured once in `MCP_SERVER_ENDPOINT`**
+- Use `MOCK_ALL=true` to enable mock mode for all APIs
 
 ## 🐛 Troubleshooting
 
@@ -199,7 +226,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 ## 📚 Notes
 Removed legacy scripts and outdated guides; this README is the up-to-date reference.
-– [API Specifications](api_specs/): OpenAPI specifications for included APIs
+– [API Specifications](openapi_specs/): OpenAPI specifications for included APIs
 
 ## 🤝 Contributing
 

@@ -92,7 +92,8 @@ class OpenAPIMCPServer:
 
     def login_and_get_session(self, spec_name: str, username: str, password: str,
                               api_key_name: Optional[str] = None,
-                              api_key_value: Optional[str] = None) -> requests.Session:
+                              api_key_value: Optional[str] = None,
+                              login_path: Optional[str] = None) -> requests.Session:
         spec = self.api_specs[spec_name]
         session = requests.Session()
 
@@ -105,7 +106,12 @@ class OpenAPIMCPServer:
 
         # Resolve login URL; ignore empty env var
         env_login = os.getenv("LOGIN_URL")
-        login_url = env_login.strip() if (env_login and env_login.strip()) else (spec.base_url.rstrip('/') + "/login")
+        # Use provided login_path parameter, fallback to env var, then default
+        effective_login_path = login_path or os.getenv("LOGIN_PATH", "/login")
+        if env_login and env_login.strip():
+            login_url = env_login.strip()
+        else:
+            login_url = spec.base_url.rstrip('/') + effective_login_path
         logger.info(f"Performing Basic Auth login to {login_url}")
 
         try:
@@ -294,13 +300,14 @@ class OpenAPIMCPServer:
     def _register_core_tools(self):
         # internal reusable login logic (not decorated) so HTTP route can call real callable
         def _core_login(username: str, password: str, spec_name: Optional[str] = None,
-                        api_key_name: Optional[str] = None, api_key_value: Optional[str] = None):
+                        api_key_name: Optional[str] = None, api_key_value: Optional[str] = None,
+                        login_path: Optional[str] = None):
             if not self.api_specs:
                 return {"status": "error", "message": "No API specs loaded"}
             if spec_name is None:
                 spec_name = sorted(self.api_specs.keys())[0]
             try:
-                session = self.login_and_get_session(spec_name, username, password, api_key_name, api_key_value)
+                session = self.login_and_get_session(spec_name, username, password, api_key_name, api_key_value, login_path)
                 cookies = session.cookies.get_dict()
                 cookie_value = next(iter(cookies.values()), "dummy_session_id")
                 return {
@@ -362,8 +369,9 @@ class OpenAPIMCPServer:
 
         @self.mcp.tool(description="Log in and store configuration for API calls.")
         def login(username: str, password: str, spec_name: Optional[str] = None,
-                  api_key_name: Optional[str] = None, api_key_value: Optional[str] = None):
-            return _core_login(username, password, spec_name, api_key_name, api_key_value)
+                  api_key_name: Optional[str] = None, api_key_value: Optional[str] = None,
+                  login_path: Optional[str] = None):
+            return _core_login(username, password, spec_name, api_key_name, api_key_value, login_path)
 
         @self.mcp.tool(description="Reload OpenAPI specifications from disk.")
         def reload_openapi_specs():
@@ -476,7 +484,11 @@ class OpenAPIMCPServer:
                 tools_created += 1
         return tools_created
         
-    def run(self, transport: str = "stdio", host: str = "127.0.0.1", port: int = 9000):
+    def run(self, transport: str = "stdio", host: str = None, port: int = None):
+        if host is None:
+            host = os.getenv('MCP_HOST', '127.0.0.1')
+        if port is None:
+            port = int(os.getenv('MCP_PORT', '9000'))
         logger.info("Starting OpenAPI MCP Server")
         self.mcp.run(transport=transport)
 
@@ -691,8 +703,8 @@ async def call_tool(tool_name: str, body: dict):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--transport", type=str, default="stdio", choices=["stdio", "http"])
-    parser.add_argument("--host", type=str, default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=9000)
+    parser.add_argument("--host", type=str, default=os.getenv('MCP_HOST', '127.0.0.1'))
+    parser.add_argument("--port", type=int, default=int(os.getenv('MCP_PORT', '9000')))
     args = parser.parse_args()
     if args.transport == "http":
         # Serve FastAPI app (introspection + tool execution endpoints)

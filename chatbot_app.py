@@ -29,7 +29,6 @@ else:
     logging.getLogger('chatbot_app').info('AZURE_OPENAI_ENDPOINT not set for chatbot_app (will use fallback summaries).')
 
 from fastmcp_client import ChatbotFastMCPClient
-from assistant_core import synthesize_answer, tokenize, score_tool, select_tools, parse_inline_args
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("chatbot_app")
@@ -110,6 +109,7 @@ class ConfigurationRequest(BaseModel):
     username: str
     password: str
     base_url: str
+    login_path: Optional[str] = "/login"
     environment: Optional[str] = "DEV"
     session_id: Optional[str] = None
 
@@ -117,13 +117,14 @@ class ConfigurationRequest(BaseModel):
 async def startup_event():
     global mcp_client
     logger.info("Starting app and creating MCP HTTP client...")
-    mcp_client = ChatbotFastMCPClient(server_url="http://localhost:9000/mcp")
+    mcp_server_endpoint = os.getenv('MCP_SERVER_ENDPOINT', 'http://localhost:9000')
+    mcp_client = ChatbotFastMCPClient(server_url=f"{mcp_server_endpoint}/mcp")
     try:
         ok = await mcp_client.health_check()
         if ok:
             logger.info("Connected to MCP server (HTTP).")
         else:
-            logger.warning("MCP server not reachable at startup (http://localhost:9000).")
+            logger.warning(f"MCP server not reachable at startup ({mcp_server_endpoint}).")
     except Exception as e:
         logger.exception("Startup health check failed: %s", e)
 
@@ -467,6 +468,7 @@ async def configure_credentials(req: ConfigurationRequest):
         "username": req.username,
         "password": req.password,
         "base_url": req.base_url,
+        "login_path": req.login_path,
         "environment": req.environment,
         "configured_at": datetime.now().isoformat()
     }
@@ -474,6 +476,7 @@ async def configure_credentials(req: ConfigurationRequest):
     mcp_client.username = req.username
     mcp_client.password = req.password
     mcp_client.base_url = req.base_url
+    mcp_client.login_path = req.login_path
     mcp_client.environment = req.environment
     # mark unauthenticated so next ask_question triggers login attempt
     mcp_client.authenticated = False
@@ -525,6 +528,7 @@ async def chat_endpoint(req: ChatRequest):
     mcp_client.username = cfg["username"]
     mcp_client.password = cfg["password"]
     mcp_client.base_url = cfg["base_url"]
+    mcp_client.login_path = cfg.get("login_path", "/login")
     mcp_client.environment = cfg.get("environment", "DEV")
 
     # ensure login once before delegating to assistant
@@ -650,5 +654,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
 
 if __name__ == "__main__":
-    logger.info("Starting uvicorn for chatbot_app on 0.0.0.0:9080")
-    uvicorn.run("chatbot_app:app", host="0.0.0.0", port=9080, reload=True, log_level="info")
+    host = os.getenv('CHATBOT_HOST', '0.0.0.0')
+    port = int(os.getenv('CHATBOT_PORT', '9080'))
+    logger.info(f"Starting uvicorn for chatbot_app on {host}:{port}")
+    uvicorn.run("chatbot_app:app", host=host, port=port, reload=True, log_level="info")

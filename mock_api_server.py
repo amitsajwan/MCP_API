@@ -4,11 +4,14 @@ Serves simplified JSON for endpoints defined in cash_api spec.
 Run: python mock_api_server.py --port 9001
 Then set FORCE_BASE_URL_CASH=http://localhost:9001 (or use launcher --with-mock) before starting openapi_mcp_server.py.
 """
-import random, string, argparse, uvicorn
+import random, string, argparse, uvicorn, os
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = FastAPI(title="Mock Cash API", version="1.0")
 
@@ -153,11 +156,11 @@ def cash_summary(date_range: str | None = None, include_pending: bool = True):
     }
 
 if __name__ == "__main__":
-    import os
     parser = argparse.ArgumentParser()
-    parser.add_argument('--host', default='127.0.0.1')
-    env_port = os.environ.get('MOCK_API_PORT')
-    default_port = int(env_port) if env_port and env_port.isdigit() else 9001
+    default_host = os.getenv('MOCK_API_HOST', '127.0.0.1')
+    default_port = int(os.getenv('MOCK_API_PORT', '9001'))
+    parser.add_argument('--host', default=default_host)
     parser.add_argument('--port', type=int, default=default_port)
     args = parser.parse_args()
+    print(f"Starting Mock API Server on {args.host}:{args.port}")
     uvicorn.run("mock_api_server:app", host=args.host, port=args.port, reload=False)

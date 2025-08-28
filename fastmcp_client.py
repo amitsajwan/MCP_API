@@ -7,21 +7,27 @@ HTTP-based MCP client used by the FastAPI chatbot frontend.
 
 import asyncio
 import logging
+import os
 import aiohttp
 from typing import Dict, Any, Optional, List
+from dotenv import load_dotenv
 
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("fastmcp_client")
 
 
 class DirectHTTPMCPClient:
-    def __init__(self, server_url: str = "http://localhost:9000"):
+    def __init__(self, server_url: str = None):
+        if server_url is None:
+            server_url = os.getenv('MCP_SERVER_ENDPOINT', 'http://localhost:9000')
         self.server_url = server_url.rstrip("/")
         self._session: Optional[aiohttp.ClientSession] = None
         self.authenticated = False
         self.username: Optional[str] = None
         self.password: Optional[str] = None
         self.base_url: Optional[str] = None
+        self.login_path: Optional[str] = "/login"
         self.environment = "DEV"
 
     async def _ensure_session(self):
@@ -133,7 +139,7 @@ class ChatbotFastMCPClient(DirectHTTPMCPClient):
     The client used by chatbot_app.py. Adds high level chat helpers expected by the app.
     """
 
-    def __init__(self, server_url: str = "http://localhost:9000"):
+    def __init__(self, server_url: str = None):
         super().__init__(server_url)
         self.conversation_history: List[Dict[str, Any]] = []
 
@@ -142,7 +148,11 @@ class ChatbotFastMCPClient(DirectHTTPMCPClient):
             return {"status": "error", "message": "username/password required"}
         try:
             # Server login tool accepts: username, password, optional spec_name/api_key_*
-            return await self.call_tool("login", username=self.username, password=self.password)
+            # Also pass login_path if configured
+            login_args = {"username": self.username, "password": self.password}
+            if self.login_path:
+                login_args["login_path"] = self.login_path
+            return await self.call_tool("login", **login_args)
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
@@ -218,7 +228,7 @@ class ChatbotFastMCPClient(DirectHTTPMCPClient):
 
 # quick test runner (async)
 async def _test():
-    client = ChatbotFastMCPClient(server_url="http://localhost:9000")
+    client = ChatbotFastMCPClient()
     ok = await client.health_check()
     print("server up:", ok)
     if ok:

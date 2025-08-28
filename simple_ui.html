@@ -34,8 +34,9 @@
                 <label><input type='checkbox' id='assistant' checked/> Assistant Auto Tools</label>
                 <label>Max Tools <input type='number' id='maxTools' min='1' max='5' value='1' style='width:60px;'/></label>
                 <span class='small'>Type a prompt like: <code>pending payments status=pending</code> or <code>cash summary</code></span>
+                <span id='loginStatus' style='color:#ff6b6b; font-weight:600;'>Not Configured</span>
                 <span id='status'>Idle</span>
-                <button id='cfgBtn' style='margin-left:auto'>Configure</button>
+                <button id='cfgBtn' style='margin-left:auto; background:#ff6b6b; border-color:#ff6b6b;'>Login & Configure</button>
             </div>
 
             <div id='log'></div>
@@ -45,6 +46,7 @@
                     <label>Username <input type='text' id='cfgUser' required></label>
                     <label>Password <input type='password' id='cfgPass' required></label>
                     <label>Base URL <input type='text' id='cfgBase' placeholder='http://127.0.0.1:9001' required></label>
+                    <label>Login Path <input type='text' id='cfgLoginPath' placeholder='/login' value='/login'></label>
                     <div style='display:flex;gap:.5rem;justify-content:flex-end'>
                         <button value='cancel'>Cancel</button>
                         <button id='cfgSave' value='default'>Save</button>
@@ -72,6 +74,7 @@
                 const cfgUser = document.getElementById('cfgUser');
                 const cfgPass = document.getElementById('cfgPass');
                 const cfgBase = document.getElementById('cfgBase');
+                const cfgLoginPath = document.getElementById('cfgLoginPath');
 
                 
                 // Surface JS errors in the UI so users see why nothing appears
@@ -157,23 +160,44 @@
                     logEl.scrollTop = logEl.scrollHeight;
                 }
 
-                add('system', 'Assistant ready.');
+                add('system', 'Assistant ready. Please click "Login & Configure" to set up your credentials.');
 
                 cfgBtn.addEventListener('click', ()=> cfgDlg.showModal());
+                const loginStatusEl = document.getElementById('loginStatus');
+                
+                function updateLoginStatus(isConfigured) {
+                    if (isConfigured) {
+                        loginStatusEl.textContent = 'Configured ✓';
+                        loginStatusEl.style.color = '#4ade80';
+                        cfgBtn.textContent = 'Reconfigure';
+                        cfgBtn.style.background = '#2d5fff';
+                        cfgBtn.style.borderColor = '#2d5fff';
+                    } else {
+                        loginStatusEl.textContent = 'Not Configured';
+                        loginStatusEl.style.color = '#ff6b6b';
+                        cfgBtn.textContent = 'Login & Configure';
+                        cfgBtn.style.background = '#ff6b6b';
+                        cfgBtn.style.borderColor = '#ff6b6b';
+                    }
+                }
+
                 cfgForm.addEventListener('submit', async (e)=>{
                     e.preventDefault();
                     const body = {
                         username: cfgUser.value.trim(),
                         password: cfgPass.value,
                         base_url: cfgBase.value.trim(),
+                        login_path: cfgLoginPath.value.trim() || '/login',
                         environment: 'DEV'
                     };
                     try{
                         const resp = await fetch('/configure', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
                         if(!resp.ok) throw new Error('HTTP '+resp.status);
                         // optionally, update server spec base URLs so tools hit the same env
-                        await fetch('http://127.0.0.1:9000/mcp/spec_base_url', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({base_url: body.base_url})}).catch(()=>{});
-                        add('system', 'Configuration saved.');
+                        const mcpEndpoint = window.location.protocol + '//' + window.location.hostname + ':9000'; // Default MCP port
+                        await fetch(`${mcpEndpoint}/mcp/spec_base_url`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({base_url: body.base_url})}).catch(()=>{});
+                        add('system', 'Configuration saved successfully! You can now use the assistant.');
+                        updateLoginStatus(true);
                         cfgDlg.close();
                     }catch(err){
                         add('assistant', 'Config error: '+err.message);

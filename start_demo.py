@@ -84,7 +84,7 @@ def check_dependencies():
 
 def check_api_specs():
     """Check if API specification files exist"""
-    api_specs_dir = Path("api_specs")
+    api_specs_dir = Path("openapi_specs")
     required_specs = [
         "cash_api.yaml",
         "securities_api.yaml", 
@@ -93,7 +93,7 @@ def check_api_specs():
     ]
     
     if not api_specs_dir.exists():
-        print("❌ api_specs directory not found!")
+        print("❌ openapi_specs directory not found!")
         return False
     
     missing_specs = []
@@ -104,7 +104,7 @@ def check_api_specs():
     if missing_specs:
         print("❌ Missing API specification files:")
         for spec in missing_specs:
-            print(f"   - api_specs/{spec}")
+            print(f"   - openapi_specs/{spec}")
         return False
     
     return True
