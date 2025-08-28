@@ -1,11 +1,15 @@
-## OpenAPI MCP Server (Agentic, Azure OpenAI)
+## OpenAPI MCP Server (Pure MCP, Client-Side LLM)
 
-Minimal agentic bridge that auto-loads OpenAPI specs as tools and lets an LLM plan and execute multi-step calls.
+Proper MCP implementation that follows the real-world pattern:
+- **MCP Server**: Pure tool provider (no LLM logic)
+- **MCP Client**: LLM-based client that does planning and orchestration
+- **UI**: Simple interface using the MCP client
 
 Key points
 - Auto-load OpenAPI specs from `openapi_specs/` and expose tools under `/mcp/*`
-- Agentic planning via Azure OpenAI (`/llm/agent`) with sequential multi-API execution
-- Assistant endpoint `/assistant/chat` returns a natural-language answer for UIs
+- **Automatic authentication** - set credentials once, auto-login on API calls
+- **Client-side LLM planning** - MCP client handles tool orchestration
+- **Pure MCP server** - no LLM logic, just tool provider
 - Simple HTML UI at `/simple` (from `chatbot_app.py`)
 - Clear logging for inbound requests and outbound API calls
 
@@ -44,8 +48,8 @@ Endpoints
 - GET  /mcp/tool_meta/{tool}          tool params
 - POST /mcp/tools/{tool}              execute tool (body: {"arguments": {...}})
 - GET  /mcp/prompts                   quick prompt suggestions
-// LLM endpoints removed in tools-only mode; client should plan and chain.
-- POST /assistant/chat                UI-friendly agentic execution with NL summary
+- POST /credentials                   set authentication credentials
+- POST /assistant/chat                UI-friendly query execution with NL summary
 
 Multi-step + simple chaining
 - The agent may return multiple steps; they execute sequentially up to max_steps.
@@ -67,17 +71,26 @@ Notes
 
 <!-- Parallel execution is not implemented in this edition; sequential multi-step only. -->
 
-## 🏗️ Architecture (Slim)
+## 🏗️ Architecture (Proper MCP)
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Chatbot/LLM   │───▶│  OpenAPI MCP     │───▶│  REST APIs      │
-│                 │    │  Server          │    │                 │
-│ - Claude        │    │                  │    │ - Cash API      │
-│ - ChatGPT       │    │ - Tool Registry  │    │ - Securities    │
-│ - Custom        │    │ - Router         │    │ - CLS           │
-└─────────────────┘    │ - Router         │    │ - Mailbox       │
-                       └──────────────────┘    └─────────────────┘
+│   UI            │───▶│  MCP Client      │───▶│  MCP Server     │
+│                 │    │  (LLM-based)     │    │  (Tools Only)   │
+│ - React/HTML    │    │                  │    │                 │
+│ - User Input    │    │ - LLM Planning   │    │ - Tool Registry │
+│                 │    │ - Tool Execution │    │ - Auto Auth     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                                │
+                                ▼
+                       ┌─────────────────┐
+                       │  REST APIs      │
+                       │                 │
+                       │ - Cash API      │
+                       │ - Securities    │
+                       │ - CLS           │
+                       │ - Mailbox       │
+                       └─────────────────┘
 ```
 
 ## 🔧 Configuration
@@ -148,6 +161,28 @@ MCP_API/
 ├── openapi_specs/             # Loaded specs directory used by server
 ├── frontend/                  # React (Vite) UI source
 └── tests/ (future)            # Placeholder for test suite
+```
+
+## 🔐 Authentication Flow
+
+The new architecture uses **automatic authentication**:
+
+1. **Set credentials once**: Use `/credentials` endpoint or UI configuration
+2. **Auto-login**: MCP server automatically logs in when needed
+3. **Session management**: JSESSIONID is cached and reused
+4. **Seamless experience**: No manual login/logout required
+
+### Example:
+```bash
+# Set credentials
+curl -X POST http://localhost:9080/credentials \
+  -H "Content-Type: application/json" \
+  -d '{"username": "user", "password": "pass", "spec_name": "cash_api"}'
+
+# Now all API calls auto-authenticate
+curl -X POST http://localhost:9080/assistant/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Show me pending payments"}'
 ```
 
 ## 🚀 Getting Started
