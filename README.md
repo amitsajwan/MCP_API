@@ -1,280 +1,467 @@
-## OpenAPI MCP Server (Pure MCP, Client-Side LLM)
+# MCP API Project - WebSocket-based Real-time AI Assistant
 
-Proper MCP implementation that follows the real-world pattern:
+A modern, real-time implementation of an MCP (Model Context Protocol) API project with WebSocket-based UI and enhanced AI reasoning:
+
 - **MCP Server**: Pure tool provider (no LLM logic)
-- **MCP Client**: LLM-based client that does planning and orchestration
-- **UI**: Simple interface using the MCP client
+- **MCP Client**: LLM-based client with detailed reasoning and planning
+- **Chatbot App**: Real-time WebSocket UI with live reasoning display
+- **Mock Server**: Testing and development support
 
-Key points
-- Auto-load OpenAPI specs from `openapi_specs/` and expose tools under `/mcp/*`
-- **Automatic authentication** - set credentials once, auto-login on API calls
-- **Client-side LLM planning** - MCP client handles tool orchestration
-- **Pure MCP server** - no LLM logic, just tool provider
-- Simple HTML UI at `/simple` (from `chatbot_app.py`)
-- Clear logging for inbound requests and outbound API calls
-
-Prerequisites
-- Python 3.9+
-- pip
-
-Install
-```powershell
-pip install -r requirements.txt
-```
-
-Quick start
-```powershell
-# Optional: mock-only/demo
-$env:FORCE_BASE_URL='http://localhost:9001'
-python mock_api_server.py   # in a separate terminal (port 9001)
-
-# MCP HTTP server
-python openapi_mcp_server.py --transport http   # http://127.0.0.1:9000
-
-# Chatbot UI/API
-python chatbot_app.py                           # http://127.0.0.1:9080
-```
-
-Environment
-- OPENAPI_DIR: directory of specs (default: ./openapi_specs)
-- FORCE_BASE_URL or FORCE_BASE_URL_<SPEC>: override spec server URL
-- MOCK_ALL=1: force all specs to mock base (default http://localhost:9001)
-- AUTO_MOCK_FALLBACK=1: retry failed external calls against mock
-- AZURE_OPENAI_ENDPOINT: required for LLM planning/summaries
-- AZURE_OPENAI_DEPLOYMENT: optional (default: gpt-4)
-
-Endpoints
-- GET  /mcp/tools                     list tools
-- GET  /mcp/tool_meta/{tool}          tool params
-- POST /mcp/tools/{tool}              execute tool (body: {"arguments": {...}})
-- GET  /mcp/prompts                   quick prompt suggestions
-- POST /credentials                   set authentication credentials
-- POST /login                        login using Basic Auth
-- POST /assistant/chat                UI-friendly query execution with NL summary
-
-Multi-step + simple chaining
-- The agent may return multiple steps; they execute sequentially up to max_steps.
-- You can reference prior results in later step arguments using placeholders like:
-   {"accountId": "${cash_api_getCashSummary.accounts.0.id}"}
-
-Logging
-- Access logs for all HTTP endpoints
-- Outbound API logs: method, URL, query/header keys, and a response preview
-
-Troubleshooting
-- Check /llm/status -> { provider: "openai", azure_openai_endpoint_present: true }
-- If external endpoints fail, set FORCE_BASE_URL or use MOCK_ALL/AUTO_MOCK_FALLBACK
-
-Notes
-- Groq planning removed; Azure OpenAI-only to keep it simple and reliable.
-- Older guides were removed to avoid duplication; this README is the source of truth.
- - Client-side planning and chaining is the default. Server is tools-only.
-
-<!-- Parallel execution is not implemented in this edition; sequential multi-step only. -->
-
-## 🏗️ Architecture (Proper MCP)
+## 🏗️ Architecture
 
 ```
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   UI            │───▶│  MCP Client      │───▶│  MCP Server     │───▶│  REST APIs      │
-│                 │    │  (LLM-based)     │    │  (Tools Only)   │    │                 │
-│ - React/HTML    │    │                  │    │                 │    │ - Cash API      │
-│ - User Input    │    │ - LLM Planning   │    │ - Tool Registry │    │ - Securities    │
-│                 │    │ - Tool Execution │    │ - Auto Auth     │    │ - CLS           │
-└─────────────────┘    └──────────────────┘    └─────────────────┘    │ - Mailbox       │
+│   WebSocket UI  │◄──►│  Chatbot App     │───▶│  MCP Client     │───▶│  MCP Server     │
+│                 │    │  (Real-time)     │    │  (LLM Planning) │    │  (Tools Only)   │
+│ - Real-time     │    │                  │    │                  │    │                  │
+│ - Live Reasoning│    │ - WebSocket Mgmt │    │ - Tool Planning │    │ - OpenAPI Tools │
+│ - Typing Ind.   │    │ - Auth Gateway   │    │ - Detailed Logic│    │ - Auth Handler   │
+└─────────────────┘    └──────────────────┘    └──────────────────┘    └─────────────────┘
+                                                                              │
+                                                                              ▼
+                                                                      ┌─────────────────┐
+                                                                      │  REST APIs      │
+                                                                      │                 │
+                                                                      │ - Cash API      │
+                                                                      │ - Securities    │
+                                                                      │ - CLS           │
+                                                                      │ - Mailbox       │
                                                                       └─────────────────┘
 ```
 
-**Key Points:**
-- **MCP Client** only calls MCP Server tools (never direct REST APIs)
-- **MCP Server** embeds and exposes REST APIs as tools
-- **REST APIs** are abstracted away from the client
+## ✨ Key Features
 
-## 🔄 Data Flow
+### 🔄 **Real-time WebSocket Communication**
+- **Live chat interface** with instant responses
+- **Typing indicators** showing when AI is thinking
+- **Connection status** with automatic reconnection
+- **Real-time reasoning display** showing AI's thought process
 
-1. **User Query** → "Show me pending payments"
-2. **MCP Client** → LLM plans which MCP server tools to call
-3. **MCP Client** → Calls `cash_api_getPayments` tool on MCP server
-4. **MCP Server** → Executes tool, auto-authenticates with REST API
-5. **MCP Server** → Returns result to MCP client
-6. **MCP Client** → LLM generates natural language summary
-7. **UI** → Displays result to user
+### 🧠 **Enhanced AI Reasoning**
+- **Detailed planning** with step-by-step explanations
+- **Tool-by-tool reasoning** showing why each tool is called
+- **Execution status** with success/failure indicators
+- **Human-readable summaries** with context and insights
 
-**Important:** The MCP client never connects directly to REST APIs. All API interactions go through the MCP server's tool layer.
+### 🔐 **Azure AD Token Provider Support**
+- **Secure authentication** using Azure AD tokens
+- **No API keys needed** - uses Azure Identity
+- **Automatic token refresh** handled by Azure
+- **Role-based access** with Azure RBAC
 
-## 🔧 Configuration
+## 🚀 Quick Start
 
-### Server Configuration
+### 1. Setup Environment
 
-```python
-# In openapi_mcp_server.py
-server = OpenAPIMCPServer()
-server.run(
-    transport="http",
-    host="localhost",
-    port=8000
-)
+```bash
+# Clone the repository
+git clone <repository-url>
+cd MCP_API
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Copy and configure environment
+cp config.env.example .env
+# Edit .env with your Azure OpenAI credentials
 ```
 
-### Logging Configuration
+### 2. Configure Environment
 
-```python
-# Enable debug logging
-logging.basicConfig(level=logging.DEBUG)
+Edit `.env` file with your settings:
+
+#### Option A: Azure AD Token Provider (Recommended)
+```env
+# Azure OpenAI Configuration
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT=gpt-4
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+
+# Azure AD Token Provider Configuration
+USE_AZURE_AD_TOKEN_PROVIDER=true
+AZURE_AD_TOKEN_SCOPE=https://cognitiveservices.azure.com/.default
+
+# WebSocket Configuration
+WEBSOCKET_ENABLED=true
+WEBSOCKET_PATH=/ws
+
+# Authentication (Optional)
+DEFAULT_USERNAME=your-username
+DEFAULT_PASSWORD=your-password
+DEFAULT_LOGIN_URL=http://api.company.com/login
 ```
 
-## 🚨 Error Handling
+#### Option B: API Key Authentication (Legacy)
+```env
+# Azure OpenAI Configuration
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_DEPLOYMENT=gpt-4
+AZURE_OPENAI_API_KEY=your-api-key-here
 
-The system includes comprehensive error handling:
+# Disable Azure AD Token Provider
+USE_AZURE_AD_TOKEN_PROVIDER=false
 
-- **OpenAPI Validation**: Validates specifications before loading
-- **API Call Errors**: Returns detailed error information
-- **Authentication Errors**: Handles auth failures gracefully
-- **Network Errors**: Manages connection issues
+# WebSocket Configuration
+WEBSOCKET_ENABLED=true
+WEBSOCKET_PATH=/ws
 
-## ⚡ Performance
-
-- **Parallel Execution**: Up to 5 parallel API calls by default
-- **Connection Pooling**: Reuses HTTP connections
-- **Caching**: Session-based caching for authentication
-- **Timeout Handling**: Configurable request timeouts
-
-## 🔒 Security Considerations
-
-1. **Token Management**: Store tokens securely, not in code
-2. **API Access**: Use least privilege principle for API access
-3. **Network Security**: Use HTTPS for all API communications
-4. **Input Validation**: Validate all user inputs before API calls
-
-## 📁 Key Files
+# Authentication (Optional)
+DEFAULT_USERNAME=your-username
+DEFAULT_PASSWORD=your-password
+DEFAULT_LOGIN_URL=http://api.company.com/login
 ```
-openapi_mcp_server.py   # Core server + FastAPI introspection
-chatbot_app.py          # Chat/assistant proxy + simple UI route (/simple)
-llm_mcp_bridge.py       # LLM agent & route helpers
-mock_api_server.py      # Local mock cash API
-start_demo.py           # Unified launcher
-frontend/               # Minimal React SimpleChatApp (optional)
-openapi_specs/          # Drop your OpenAPI YAML/JSON specs here
+
+### 3. Azure AD Token Provider Setup
+
+If using Azure AD Token Provider (recommended), ensure you have:
+
+1. **Azure CLI installed and logged in**:
+   ```bash
+   az login
+   ```
+
+2. **Proper permissions** to access the Azure OpenAI resource:
+   - Contributor or Cognitive Services User role on the Azure OpenAI resource
+   - Or appropriate RBAC permissions
+
+3. **Azure Identity package installed**:
+   ```bash
+   pip install azure-identity
+   ```
+
+### 4. Run the Application
+
+#### Development Mode (Recommended)
+```bash
+# Start everything with mock APIs
+python launcher.py --mode dev
+
+# Start without mock APIs (use real APIs)
+python launcher.py --mode dev --no-mock
+
+# Start without frontend dev server
+python launcher.py --mode dev --no-frontend
 ```
+
+#### Production Mode
+```bash
+# Build frontend and start production servers
+python launcher.py --mode prod
+```
+
+#### Manual Startup
+```bash
+# Terminal 1: Start MCP Server
+python mcp_server.py
+
+# Terminal 2: Start Chatbot App
+python chatbot_app.py
+
+# Terminal 3: Start Mock Server (optional)
+python mock_server.py
+```
+
+## 📁 Project Structure
 
 ```
 MCP_API/
-├── openapi_mcp_server.py      # MCP server (OpenAPI -> tools)
-├── chatbot_app.py             # FastAPI API + proxy + serves frontend build
-├── fastmcp_client.py          # HTTP client used by chatbot
-├── start_demo.py              # Convenience launcher
-├── requirements.txt           # Python dependencies
-├── README.md                  # Documentation
-├── (guides removed)           # This README is the source of truth
-├── api_specs/                 # Source OpenAPI specs (authoring)
-├── openapi_specs/             # Loaded specs directory used by server
-├── frontend/                  # React (Vite) UI source
-└── tests/ (future)            # Placeholder for test suite
+├── config.py              # Centralized configuration
+├── mcp_server.py          # MCP Server (tools only)
+├── mcp_client.py          # MCP Client (LLM planning + reasoning)
+├── chatbot_app.py         # WebSocket UI and API gateway
+├── mock_server.py         # Mock API server
+├── launcher.py            # Unified launcher
+├── config.env.example     # Environment template
+├── requirements.txt       # Python dependencies
+├── README.md             # This file
+├── openapi_specs/        # OpenAPI specifications
+│   ├── cash_api.yaml
+│   ├── securities_api.yaml
+│   ├── cls_api.yaml
+│   └── mailbox_api.yaml
+└── frontend/             # React frontend (optional)
 ```
 
-## 🔐 Authentication Flow
+## 🔧 Configuration
 
-The new architecture uses **simple two-step authentication**:
+All configuration is centralized in `config.py` and loaded from environment variables:
 
-1. **Set credentials**: Use `/credentials` endpoint or UI configuration
-2. **Login**: Use `/login` endpoint to authenticate and get JSESSIONID
-3. **Session management**: JSESSIONID is cached and reused
-4. **Simple workflow**: Set credentials once, login when needed
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCP_HOST` | MCP server host | `127.0.0.1` |
+| `MCP_PORT` | MCP server port | `9000` |
+| `CHATBOT_HOST` | Chatbot host | `0.0.0.0` |
+| `CHATBOT_PORT` | Chatbot port | `9080` |
+| `WEBSOCKET_ENABLED` | Enable WebSocket | `true` |
+| `WEBSOCKET_PATH` | WebSocket path | `/ws` |
+| `MOCK_API_HOST` | Mock API host | `127.0.0.1` |
+| `MOCK_API_PORT` | Mock API port | `9001` |
+| `OPENAPI_DIR` | OpenAPI specs directory | `./openapi_specs` |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint | Required |
+| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI deployment | `gpt-4` |
+| `USE_AZURE_AD_TOKEN_PROVIDER` | Use Azure AD auth | `true` |
+| `AZURE_AD_TOKEN_SCOPE` | Azure AD token scope | `https://cognitiveservices.azure.com/.default` |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key | Required (if not using Azure AD) |
 
-### Example:
+## 🔐 Authentication
+
+### Azure AD Token Provider (Recommended)
+
+The system supports Azure AD token provider authentication, which is more secure and follows Azure best practices:
+
+1. **No API keys needed** - Uses Azure AD tokens
+2. **Automatic token refresh** - Handled by Azure Identity
+3. **Role-based access** - Uses Azure RBAC permissions
+4. **Multiple auth methods** - Supports managed identity, service principal, etc.
+
+### API Key Authentication (Legacy)
+
+For backward compatibility, the system also supports traditional API key authentication:
+
+1. **Set API key** in environment variables
+2. **Disable Azure AD** by setting `USE_AZURE_AD_TOKEN_PROVIDER=false`
+
+### Application Authentication
+
+The system supports two-step authentication for the financial APIs:
+
+1. **Set Credentials**: Use the web UI or API endpoint
+2. **Login**: Automatic login when needed
+
+### API Endpoints
+
 ```bash
 # Set credentials
 curl -X POST http://localhost:9080/credentials \
   -H "Content-Type: application/json" \
-  -d '{"username": "user", "password": "pass", "login_url": "http://api.company.com/login"}'
+  -d '{"username": "user", "password": "pass"}'
 
-# Login to get JSESSIONID
-curl -X POST http://localhost:9080/login \
-  -H "Content-Type: application/json"
+# Login
+curl -X POST http://localhost:9080/login
 
-# Now use the assistant
+# Chat (REST endpoint for backward compatibility)
 curl -X POST http://localhost:9080/assistant/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Show me pending payments"}'
 ```
 
-## 🚀 Getting Started
+## 🌐 Access URLs
 
-### Prerequisites
-1. Copy `.env.example` to `.env` and configure your settings:
-   ```bash
-   cp .env.example .env
-   ```
-2. Edit `.env` file with your Azure OpenAI credentials and desired server configurations
+After starting the application:
 
-### Quick Demo (All-in-One)
-```bash
-python start_demo.py
+- **Real-time Chat UI**: http://localhost:9080
+- **WebSocket Endpoint**: ws://localhost:9080/ws
+- **Frontend Dev**: http://localhost:9517 (dev mode)
+- **Built UI**: http://localhost:9080/app/ (prod mode)
+- **Mock API**: http://localhost:9001
+- **MCP Server**: http://localhost:9000
+
+## 🧠 AI Reasoning Features
+
+### Real-time Reasoning Display
+
+The WebSocket UI shows the AI's reasoning process in real-time:
+
+1. **Planning Phase**: Shows which tools will be called and why
+2. **Execution Phase**: Displays real-time status of each tool execution
+3. **Summary Phase**: Provides comprehensive results with context
+
+### Enhanced Planning
+
+The AI now provides detailed reasoning for each tool call:
+
+```
+🤔 Reasoning:
+I analyzed your request: "Show me pending payments"
+I planned to execute 2 tool(s) to gather the necessary information:
+
+1. cash_api_get_accounts
+   Reason: I need to get account information first to understand which accounts are available
+   Status: ✅ Success
+   Data: Found 3 accounts: Main Checking, Savings, Investment
+
+2. cash_api_get_payments
+   Reason: Then I'll check pending payments for these accounts to show what's due
+   Status: ✅ Success
+   Data: Found 2 pending payments totaling $1,750.00
+
+Execution Summary: 2/2 tools succeeded.
+All tools executed successfully, providing complete information for your query.
 ```
 
-### Manual Startup (Step-by-Step)
+### Human-readable Summaries
 
-#### 1. Start Mock API Server (Optional)
-If you want to test with mock APIs instead of real ones:
-```bash
-python mock_api_server.py
+The AI generates comprehensive, conversational responses:
+
 ```
-- Uses `MOCK_API_HOST` and `MOCK_API_PORT` from `.env` (defaults: 127.0.0.1:9001)
-- Set `FORCE_BASE_URL_CASH=http://localhost:9001` in `.env` to use mock APIs
+Based on your request for pending payments, here's what I found:
 
-#### 2. Start MCP Server
-```bash
-python openapi_mcp_server.py --transport http
+You have 2 pending payments that need attention:
+
+1. **Rent Payment** - $1,500.00
+   - Account: Main Checking Account
+   - Due: In 5 days
+   - Recipient: Landlord LLC
+
+2. **Utility Bill** - $250.00
+   - Account: Main Checking Account  
+   - Due: In 3 days
+   - Recipient: City Utilities
+
+Total pending: $1,750.00
+
+Your Main Checking Account has a balance of $15,420.50, so you have sufficient funds to cover these payments. I recommend scheduling these payments soon to avoid any late fees.
 ```
-- Uses `MCP_HOST` and `MCP_PORT` from `.env` (defaults: 127.0.0.1:9000)
-- Loads OpenAPI specs from `OPENAPI_DIR` (default: ./openapi_specs)
-- Exposes tools at `MCP_SERVER_ENDPOINT` (default: http://localhost:9000)
 
-#### 3. Start Chatbot Application
+## 🛠️ Development
+
+### Adding New APIs
+
+1. Add OpenAPI specification to `openapi_specs/`
+2. Restart MCP server
+3. Tools are automatically registered
+
+### Customizing Configuration
+
+Edit `.env` file or set environment variables:
+
 ```bash
-python chatbot_app.py
-```
-- Uses `CHATBOT_HOST` and `CHATBOT_PORT` from `.env` (defaults: 0.0.0.0:9080)
-- Connects to MCP server using `MCP_SERVER_ENDPOINT` from `.env`
-- Access the web UI at: http://localhost:9080
+# Override API base URLs
+export FORCE_BASE_URL_CASH=http://localhost:9001
+export FORCE_BASE_URL_SECURITIES=http://api.company.com
 
-### Configuration Notes
-- **All server endpoints and ports are configured in `.env` file**
-- **Base URLs for APIs (mock/real) are set via `FORCE_BASE_URL_*` variables**
-- **MCP server endpoint is configured once in `MCP_SERVER_ENDPOINT`**
-- Use `MOCK_ALL=true` to enable mock mode for all APIs
+# Enable mock mode
+export MOCK_ALL=true
+
+# Set log level
+export LOG_LEVEL=DEBUG
+
+# WebSocket settings
+export WEBSOCKET_PING_INTERVAL=60
+export WEBSOCKET_PING_TIMEOUT=20
+```
+
+### Testing
+
+```bash
+# Check configuration
+python launcher.py --check-only
+
+# Test with mock APIs
+python launcher.py --mode dev
+
+# Test with real APIs
+python launcher.py --mode dev --no-mock
+
+# Test WebSocket connection
+# Open browser to http://localhost:9080 and start chatting
+```
 
 ## 🐛 Troubleshooting
 
 ### Common Issues
 
-1. **OpenAPI Validation Errors**
-   - Ensure your YAML file is valid OpenAPI 3.0.3
-   - Check for syntax errors in the specification
+1. **Configuration Errors**
+   ```bash
+   # Check configuration
+   python launcher.py --check-only
+   ```
 
-2. **Authentication Failures**
-   - Verify credentials are correct
-   - Check if the API requires different auth method
+2. **Missing Dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-3. **Network Issues**
-   - Verify API endpoints are accessible
-   - Check firewall/proxy settings
+3. **Azure AD Authentication Issues**
+   ```bash
+   # Check Azure CLI login
+   az account show
+   
+   # Check permissions
+   az role assignment list --assignee $(az account show --query user.name -o tsv)
+   ```
 
-4. **Tool Not Found Errors**
-   - Ensure API specification is loaded
-   - Check tool names in the generated tools list
+4. **WebSocket Connection Issues**
+   - Check if WebSocket is enabled in config
+   - Verify firewall settings
+   - Check browser console for connection errors
+
+5. **Port Conflicts**
+   - Edit `.env` file to change ports
+   - Check if ports are already in use
+
+6. **Authentication Issues**
+   - Verify credentials in web UI
+   - Check login URL configuration
+   - Review server logs
 
 ### Debug Mode
 
 Enable debug logging:
 
-```python
-logging.basicConfig(level=logging.DEBUG)
+```bash
+export LOG_LEVEL=DEBUG
+python launcher.py --mode dev
 ```
 
-## 📚 Notes
-Removed legacy scripts and outdated guides; this README is the up-to-date reference.
-– [API Specifications](openapi_specs/): OpenAPI specifications for included APIs
+## 📚 API Documentation
+
+### WebSocket API
+
+The WebSocket endpoint (`/ws`) supports real-time communication:
+
+**Client to Server Messages:**
+```json
+{
+  "type": "message",
+  "content": "Show me pending payments"
+}
+```
+
+**Server to Client Messages:**
+```json
+{
+  "type": "typing_start"
+}
+```
+```json
+{
+  "type": "message",
+  "content": "Here's what I found...",
+  "reasoning": "I analyzed your request...",
+  "plan": [
+    {
+      "tool_name": "cash_api_get_accounts",
+      "reason": "I need to get account information first..."
+    }
+  ]
+}
+```
+
+### REST API Endpoints
+
+- `GET /` - WebSocket-based chat UI
+- `GET /status` - Application status
+- `GET /tools` - List available tools
+- `POST /credentials` - Set authentication
+- `POST /login` - Perform login
+- `POST /assistant/chat` - Legacy REST chat endpoint
+
+### MCP Server Endpoints
+
+- `GET /mcp/tools` - List available tools
+- `GET /mcp/tool_meta/{tool}` - Get tool metadata
+- `POST /mcp/tools/{tool}` - Execute tool
+- `POST /credentials` - Set authentication
+- `POST /login` - Perform login
+
+### Mock API Endpoints
+
+- `GET /accounts` - List accounts
+- `GET /payments` - List payments
+- `GET /securities` - List securities
+- `GET /messages` - List messages
+- `POST /login` - Mock login
 
 ## 🤝 Contributing
 
@@ -286,77 +473,13 @@ Removed legacy scripts and outdated guides; this README is the up-to-date refere
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License.
 
 ## 🆘 Support
 
 For support and questions:
 
 1. Check the troubleshooting section
-2. Review the setup guide
-3. Use start_demo.py or direct scripts
-4. Check server logs for errors
-
-## 🔮 Roadmap (Lean)
-
-- [ ] Enhanced NLP for better query understanding
-- [ ] Response caching for improved performance
-- [ ] Webhook support for real-time updates
-- [ ] Advanced authentication methods
-- [ ] Metrics and monitoring dashboard
-- [ ] GraphQL support
-- [ ] Rate limiting and throttling
-- [ ] Multi-tenant support
-
-## 🙏 Acknowledgments
-
-- Built with [FastMCP](https://github.com/fastmcp/fastmcp)
-- OpenAPI 3.0.3 specification support
-- Financial API patterns and best practices
-
----
-
-## 🖥️ Simple React UI
-We replaced the complex console with a minimal chat (`SimpleChatApp`). Switch back by editing `frontend/src/main.tsx` to render the old `App` component if still desired.
-
-If you see only `Loading application…` at `http://localhost:9080`, you're viewing the backend placeholder. Run the dev UI separately:
-
-### Dev Mode
-```powershell
-cd frontend
-npm install   # first time
-npm run dev
-```
-Open the Vite URL (default http://localhost:9517).
-
-The UI will call the backend at http://localhost:9080 for:
-- /status
-- /tools
-- /quick_actions
-- /tool_meta/{tool_name}
-- /run_tool
-- /chat
-
-### Production Build (Served by Backend)
-```powershell
-cd frontend
-npm run build
-```
-Restart `python chatbot_app.py` and visit: http://localhost:9080/app/
-
-### Change Backend URL
-Edit `frontend/src/util/api.ts` BASE_URL.
-
-### Common Symptoms
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Only placeholder text | Dev server not running | Run `npm run dev` and use port 9517 |
-| 404 /src/main.tsx on 9080 | Expecting Vite assets from backend | Use 9517 or build & visit /app/ |
-| Empty tool list | MCP server not on 9000 | Start `openapi_mcp_server.py --transport http` |
-| CORS errors | Backend not restarted | Restart chatbot_app |
-
-### Next Frontend Enhancements
-- Credentials/login form
-- WebSocket streaming chat
-- Tool search & filtering
-- LocalStorage persistence
+2. Review the configuration guide
+3. Check server logs for errors
+4. Open an issue on GitHub
