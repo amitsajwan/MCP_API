@@ -18,9 +18,28 @@ from dataclasses import dataclass
 from openai import AsyncOpenAI
 
 # MCP Protocol imports
-from mcp import ClientSession, StdioServerParameters, stdio_client, Tool, CallToolRequest
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+from mcp.types import Tool
 
-from config import config
+# Import config or create default
+try:
+    from config import config
+except ImportError:
+    # Create default config if not available
+    class DefaultConfig:
+        LOG_LEVEL = "INFO"
+        AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
+        AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+        AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
+        USE_AZURE_AD_TOKEN_PROVIDER = False
+        AZURE_AD_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"
+        MAX_TOOL_EXECUTIONS = 5
+        
+        def validate(self):
+            return True
+    
+    config = DefaultConfig()
 
 
 # Configure logging
@@ -54,9 +73,12 @@ class MCPClient:
     def __init__(self, mcp_server_command: List[str] = None):
         self.mcp_server_command = mcp_server_command or ["python", "mcp_server.py"]
         self.session: Optional[ClientSession] = None
+        self._client_context = None
+        self._session_context = None
+        self._stdio_streams = None
         
         # Initialize OpenAI client based on authentication mode
-        if config.USE_AZURE_AD_TOKEN_PROVIDER:
+        if getattr(config, 'USE_AZURE_AD_TOKEN_PROVIDER', False):
             self.openai_client = self._create_azure_ad_client()
         else:
             self.openai_client = self._create_api_key_client()
@@ -64,6 +86,8 @@ class MCPClient:
         # Cache for tools and results
         self.available_tools: List[Tool] = []
         self.tool_results: Dict[str, Any] = {}
+        
+
     
     def _create_azure_ad_client(self) -> AsyncOpenAI:
         """Create Azure OpenAI client with Azure AD token provider."""
@@ -94,6 +118,10 @@ class MCPClient:
     
     def _create_api_key_client(self) -> AsyncOpenAI:
         """Create Azure OpenAI client with API key authentication."""
+        if not config.AZURE_OPENAI_API_KEY or not config.AZURE_OPENAI_ENDPOINT:
+            logger.warning("Azure OpenAI credentials not configured, using mock client")
+            return self._create_mock_client()
+        
         client = AsyncOpenAI(
             api_key=config.AZURE_OPENAI_API_KEY,
             base_url=config.AZURE_OPENAI_ENDPOINT,
@@ -103,22 +131,64 @@ class MCPClient:
         logger.info("✅ Azure OpenAI client created with API key authentication")
         return client
     
+    def _create_mock_client(self) -> AsyncOpenAI:
+        """Create a mock OpenAI client for testing."""
+        # This is a fallback for when credentials aren't configured
+        # In production, you should always have proper credentials
+        logger.warning("Creating mock OpenAI client - responses may be limited")
+        return AsyncOpenAI(
+            api_key="sk-mock-key",
+            base_url="https://api.openai.com/v1"
+        )
+    
     async def connect(self):
         """Connect to MCP server using stdio transport."""
         if self.session is not None:
             return
         
         try:
+            # Find the MCP server script
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            mcp_server_path = os.path.join(current_dir, "mcp_server.py")
+            
+            # Check if file exists
+            if not os.path.exists(mcp_server_path):
+                # Try alternative locations
+                alternative_paths = [
+                    os.path.join(os.getcwd(), "mcp_server.py"),
+                    "./mcp_server.py",
+                    "mcp_server.py"
+                ]
+                
+                for alt_path in alternative_paths:
+                    abs_path = os.path.abspath(alt_path)
+                    if os.path.exists(abs_path):
+                        mcp_server_path = abs_path
+                        break
+                else:
+                    raise FileNotFoundError(f"Could not find mcp_server.py in {current_dir} or current directory. Available files: {os.listdir('.')}") 
+            
+            logger.info(f"Using MCP server at: {mcp_server_path}")
+            
             # Create server parameters with proper command
-            mcp_server_path = os.path.join(os.getcwd(), "mcp_server.py")
             server_params = StdioServerParameters(
-                command=f"{sys.executable} {mcp_server_path}",
-                args=[],
-                env={}
+                command=sys.executable,
+                args=[mcp_server_path],
+                env=dict(os.environ)  # Pass current environment
             )
             
-            # Connect to MCP server
-            self.session = await stdio_client(server_params).__aenter__()
+            # Connect to the server and get read/write streams
+            self._client_context = stdio_client(server_params)
+            self._stdio_streams = await self._client_context.__aenter__()
+            read, write = self._stdio_streams
+            
+            # Create client session with the streams
+            self._session_context = ClientSession(read, write)
+            self.session = await self._session_context.__aenter__()
+            
+            # Initialize the session (crucial step!)
+            await self.session.initialize()
+            
             logger.info("✅ Connected to MCP server via stdio transport")
             
         except Exception as e:
@@ -126,11 +196,33 @@ class MCPClient:
             raise
     
     async def disconnect(self):
-        """Disconnect from MCP server."""
-        if self.session:
-            await self.session.aclose()
+        """Disconnect from the MCP server and clean up resources."""
+        if not self.session:
+            logger.warning("No active session to disconnect.")
+            return
+
+        try:
+            # Close session first
+            if hasattr(self, '_session_context') and self._session_context:
+                await self._session_context.__aexit__(None, None, None)
+                self._session_context = None
+                
+            # Then close stdio client
+            if hasattr(self, '_client_context') and self._client_context:
+                await self._client_context.__aexit__(None, None, None)
+                
+            logger.info("Session closed successfully.")
+        except Exception as e:
+            logger.error(f"Error during session cleanup: {e}")
+        finally:
             self.session = None
-            logger.info("Disconnected from MCP server")
+            self._client_context = None
+            self._stdio_streams = None
+            logger.info("Disconnected from MCP server.")
+    
+    async def close(self):
+        """Close the MCP client connection. Alias for disconnect."""
+        await self.disconnect()
     
     async def list_tools(self) -> List[Tool]:
         """Get list of available tools from MCP server using MCP protocol."""
@@ -138,8 +230,8 @@ class MCPClient:
             await self.connect()
         
         try:
-            tools = await self.session.list_tools()
-            self.available_tools = tools.tools
+            tools_response = await self.session.list_tools()
+            self.available_tools = tools_response.tools
             logger.info(f"✅ Retrieved {len(self.available_tools)} tools from MCP server")
             return self.available_tools
         except Exception as e:
@@ -152,15 +244,13 @@ class MCPClient:
             await self.connect()
         
         try:
-            # Create MCP tool call request
-            request = CallToolRequest(
+            print (" ==== >>>>> ")
+            # Execute tool via MCP protocol
+            result = await self.session.call_tool(
                 name=tool_name,
                 arguments=kwargs
             )
-            
-            # Execute tool via MCP protocol
-            result = await self.session.call_tool(request)
-            
+            print (f" ==== >>>>> {result}")
             # Process result
             if result.isError:
                 error_message = ""
@@ -200,6 +290,11 @@ class MCPClient:
         if not self.available_tools:
             await self.list_tools()
         
+        # If no tools available, return empty plan
+        if not self.available_tools:
+            logger.warning("No tools available for planning")
+            return []
+        
         # Build tools description for LLM
         tools_description = self._build_tools_description()
         
@@ -230,7 +325,7 @@ Guidelines for reasoning:
 - Explain how the tool results will help answer the user's question
 - Consider dependencies between tools (e.g., get account info before checking payments)
 - Keep the plan focused and efficient
-- Maximum {config.MAX_TOOL_EXECUTIONS} tool calls allowed
+- Maximum {getattr(config, 'MAX_TOOL_EXECUTIONS', 5)} tool calls allowed
 
 Example reasoning:
 - "I need to get account information first to understand which accounts are available"
@@ -266,14 +361,16 @@ Make your reasoning clear and helpful for the user to understand your thought pr
                     )
                     tool_calls.append(tool_call)
                 
-                return tool_calls[:config.MAX_TOOL_EXECUTIONS]  # Limit to max executions
+                return tool_calls[:getattr(config, 'MAX_TOOL_EXECUTIONS', 5)]  # Limit to max executions
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse LLM response as JSON: {e}")
+                logger.error(f"LLM response was: {content}")
                 return []
                 
         except Exception as e:
             logger.error(f"LLM planning failed: {e}")
+            # Return empty plan if LLM fails
             return []
     
     def _build_tools_description(self) -> str:
@@ -324,7 +421,7 @@ Make your reasoning clear and helpful for the user to understand your thought pr
                     logger.info(f"✅ Tool {tool_call.tool_name} executed successfully")
                 else:
                     logger.error(f"❌ Tool {tool_call.tool_name} failed: {tool_result.error}")
-                    break  # Stop on first failure
+                    # Continue execution even if one tool fails
                     
             except Exception as e:
                 logger.error(f"Exception during tool execution: {e}")
@@ -334,14 +431,13 @@ Make your reasoning clear and helpful for the user to understand your thought pr
                     result=None,
                     error=str(e)
                 ))
-                break
         
         return results
     
     async def generate_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
         """Generate a natural language summary of the results with enhanced reasoning."""
         if not tool_results:
-            return "No tools were executed."
+            return "No tools were executed to gather information for your request."
         
         # Build detailed results summary for LLM
         results_summary = []
@@ -405,42 +501,76 @@ Please provide a comprehensive response based on this information.
             
         except Exception as e:
             logger.error(f"Summary generation failed: {e}")
-            return f"Here's what I found:\n\n{execution_status}\n\n{results_text}"
+            # Fallback to basic summary
+            successful_tools = [r.tool_name for r in tool_results if r.success]
+            failed_tools = [r.tool_name for r in tool_results if not r.success]
+            
+            summary_parts = []
+            if successful_tools:
+                summary_parts.append(f"Successfully executed: {', '.join(successful_tools)}")
+            if failed_tools:
+                summary_parts.append(f"Failed to execute: {', '.join(failed_tools)}")
+            
+            return "\n".join(summary_parts) if summary_parts else "No tools could be executed."
     
+    async def process_message(self, message: str) -> str:
+        """Process a user message and return a response."""
+        result = await self.process_query(message)
+        if result["status"] == "success":
+            return result["summary"]
+        else:
+            return f"Error: {result['message']}"
+
     async def process_query(self, user_query: str) -> Dict[str, Any]:
         """Process a user query end-to-end with enhanced reasoning."""
         logger.info(f"Processing query: {user_query}")
         
-        # Step 1: Plan tool execution with detailed reasoning
-        tool_calls = await self.plan_tool_execution(user_query)
-        
-        if not tool_calls:
+        try:
+
+
+            # Step 1: Plan tool execution with detailed reasoning
+            tool_calls = await self.plan_tool_execution(user_query)
+            
+            if not tool_calls:
+                return {
+                    "status": "error",
+                    "message": "Could not plan tool execution for this query",
+                    "plan": [],
+                    "results": [],
+                    "reasoning": "I couldn't determine which tools to use for your request. This might be because the available tools don't match your query, or I need more information to understand what you're looking for.",
+                    "summary": "I couldn't determine which tools to use for your request. Please try rephrasing your question or check if the required API endpoints are available."
+                }
+            
+            # Step 2: Execute tools
+            tool_results = await self.execute_tool_plan(tool_calls)
+            
+            # Step 3: Generate enhanced summary with reasoning
+            summary = await self.generate_summary(user_query, tool_results, tool_calls)
+            
+            # Step 4: Create detailed reasoning
+            reasoning = self._create_detailed_reasoning(user_query, tool_calls, tool_results)
+            
             return {
-                "status": "error",
-                "message": "Could not plan tool execution for this query",
-                "plan": [],
-                "results": [],
-                "reasoning": "I couldn't determine which tools to use for your request. This might be because the available tools don't match your query, or I need more information to understand what you're looking for.",
-                "summary": "I couldn't determine which tools to use for your request."
+                "status": "success",
+                "plan": [{"tool_name": tc.tool_name, "arguments": tc.arguments, "reason": tc.reason} for tc in tool_calls],
+                "results": [{"tool_name": tr.tool_name, "success": tr.success, "result": tr.result, "error": tr.error} for tr in tool_results],
+                "reasoning": reasoning,
+                "summary": summary
             }
         
-        # Step 2: Execute tools
-        tool_results = await self.execute_tool_plan(tool_calls)
-        
-        # Step 3: Generate enhanced summary with reasoning
-        summary = await self.generate_summary(user_query, tool_results, tool_calls)
-        
-        # Step 4: Create detailed reasoning
-        reasoning = self._create_detailed_reasoning(user_query, tool_calls, tool_results)
-        
-        return {
-            "status": "success",
-            "plan": [{"tool_name": tc.tool_name, "arguments": tc.arguments, "reason": tc.reason} for tc in tool_calls],
-            "results": [{"tool_name": tr.tool_name, "success": tr.success, "result": tr.result, "error": tr.error} for tr in tool_results],
-            "reasoning": reasoning,
-            "summary": summary
-        }
+        except Exception as e:
+            logger.error(f"Error processing query: {e}")
+            return {
+                "status": "error",
+                "message": str(e),
+                "plan": [],
+                "results": [],
+                "reasoning": f"An error occurred while processing your request: {str(e)}",
+                "summary": f"I encountered an error while processing your request: {str(e)}"
+            }
     
+
+
     def _create_detailed_reasoning(self, user_query: str, tool_calls: List[ToolCall], tool_results: List[ToolResult]) -> str:
         """Create detailed human-readable reasoning about the execution."""
         reasoning_parts = []
@@ -482,10 +612,20 @@ async def main():
     client = MCPClient()
     
     try:
+        # Test connection
+        await client.connect()
+        
+        # List available tools
+        tools = await client.list_tools()
+        print(f"Available tools: {[tool.name for tool in tools]}")
+        
         # Process a query
         result = await client.process_query("Show me pending payments")
         print(json.dumps(result, indent=2))
         
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        print(f"Error: {e}")
     finally:
         await client.disconnect()
 

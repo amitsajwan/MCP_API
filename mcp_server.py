@@ -24,6 +24,7 @@ from dataclasses import dataclass
 # MCP Protocol imports
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
+from mcp.server.lowlevel import NotificationOptions
 from mcp.server.stdio import stdio_server
 from mcp.types import (
     Tool,
@@ -204,30 +205,93 @@ class MCPServer:
                 )
                 tools.append(tool)
             
+            # Add set_credentials tool for authentication
+            tools.append(Tool(
+                name="set_credentials",
+                description="Set authentication credentials for API access",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "username": {
+                            "type": "string",
+                            "description": "Username for authentication"
+                        },
+                        "password": {
+                            "type": "string",
+                            "description": "Password for authentication"
+                        },
+                        "api_key_name": {
+                            "type": "string",
+                            "description": "API key header name (optional)"
+                        },
+                        "api_key_value": {
+                            "type": "string",
+                            "description": "API key value (optional)"
+                        },
+                        "login_url": {
+                            "type": "string",
+                            "description": "Login URL (optional)"
+                        }
+                    },
+                    "required": ["username", "password"],
+                    "additionalProperties": False
+                }
+            ))
+            
+
+            
             return tools
         
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict) -> List[TextContent]:
             """Call an MCP tool by name."""
+            if name == "set_credentials":
+                try:
+                    username = arguments.get("username")
+                    password = arguments.get("password")
+                    api_key_name = arguments.get("api_key_name")
+                    api_key_value = arguments.get("api_key_value")
+                    login_url = arguments.get("login_url")
+                    
+                    self.set_credentials(username, password, api_key_name, api_key_value, login_url)
+                    
+                    response = {
+                        "status": "success",
+                        "message": "Credentials set successfully",
+                        "username": username,
+                        "login_url": login_url or config.DEFAULT_LOGIN_URL
+                    }
+                    
+                    return [TextContent(type="text", text=json.dumps(response, indent=2))]
+                    
+                except Exception as e:
+                    logger.error(f"Error setting credentials: {e}")
+                    return [TextContent(type="text", text=f"Error setting credentials: {str(e)}")]
+            
             if name not in self.api_tools:
+                logger.warning(f"Tool not found: {name}")
                 return [TextContent(type="text", text=f"Tool not found: {name}")]
             
             try:
+                logger.info(f"Executing tool: {name} with arguments: {arguments}")
+                
                 # Execute the tool in a separate thread to avoid blocking
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(None, self._execute_tool, name, arguments)
                 
                 if result.get("status") == "success":
                     response_text = json.dumps(result.get("data", result), indent=2)
+                    logger.info(f"Tool {name} executed successfully")
                     return [TextContent(type="text", text=response_text)]
                 else:
                     error_msg = f"Tool execution failed: {result.get('message', 'Unknown error')}"
                     if result.get('status_code'):
                         error_msg += f" (HTTP {result['status_code']})"
+                    logger.error(f"Tool {name} failed: {error_msg}")
                     return [TextContent(type="text", text=error_msg)]
                     
             except Exception as e:
-                logger.error(f"Error executing tool {name}: {e}")
+                logger.error(f"Error executing tool {name}: {e}", exc_info=True)
                 return [TextContent(type="text", text=f"Error: {str(e)}")]
     
     def _register_spec_tools(self, spec_name: str, api_spec: APISpec):
@@ -342,62 +406,62 @@ class MCPServer:
     
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Execute an API tool."""
-        tool = self.api_tools[tool_name]
-        spec = self.api_specs[tool.spec_name]
-        
-        # Ensure authentication
-        if not self._ensure_authenticated():
-            return {"status": "error", "message": "Authentication failed"}
-        
-        # Build request URL
-        url = f"{spec.base_url.rstrip('/')}{tool.path}"
-        
-        # Replace path parameters
-        for param_name, value in arguments.items():
-            if param_name in tool.parameters and tool.parameters[param_name].get('type') != 'object':
-                placeholder = f"{{{param_name}}}"
-                if placeholder in url:
-                    url = url.replace(placeholder, str(value))
-        
-        # Prepare request
-        headers = {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
-        
-        # Add API key if configured
-        if self.api_key_name and self.api_key_value:
-            headers[self.api_key_name] = self.api_key_value
-        
-        # Add custom headers
-        for param_name, value in arguments.items():
-            if param_name.startswith('header_'):
-                header_name = param_name[7:]  # Remove 'header_' prefix
-                headers[header_name] = str(value)
-        
-        # Get session
-        session = self.sessions.get(tool.spec_name)
-        if not session:
-            session = requests.Session()
-            self.sessions[tool.spec_name] = session
-        
-        # Prepare request data
-        request_data = None
-        query_params = {}
-        
-        for param_name, value in arguments.items():
-            if param_name == 'body':
-                request_data = value
-            elif param_name in tool.parameters and not param_name.startswith('header_'):
-                param_info = tool.parameters[param_name]
-                if param_info.get('type') != 'object':
-                    # Only add to query params if it's not a path parameter
-                    placeholder = f"{{{param_name}}}"
-                    if placeholder not in tool.path:
-                        query_params[param_name] = value
-        
-        # Make request
         try:
+            tool = self.api_tools[tool_name]
+            spec = self.api_specs[tool.spec_name]
+            
+            # Ensure authentication
+            if not self._ensure_authenticated():
+                return {"status": "error", "message": "Authentication failed"}
+            
+            # Build request URL
+            url = f"{spec.base_url.rstrip('/')}{tool.path}"
+            
+            # Replace path parameters
+            for param_name, value in arguments.items():
+                if param_name in tool.parameters and tool.parameters[param_name].get('type') != 'object':
+                    placeholder = f"{{{param_name}}}"
+                    if placeholder in url:
+                        url = url.replace(placeholder, str(value))
+            
+            # Prepare request
+            headers = {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+            
+            # Add API key if configured
+            if self.api_key_name and self.api_key_value:
+                headers[self.api_key_name] = self.api_key_value
+            
+            # Add custom headers
+            for param_name, value in arguments.items():
+                if param_name.startswith('header_'):
+                    header_name = param_name[7:]  # Remove 'header_' prefix
+                    headers[header_name] = str(value)
+            
+            # Get session
+            session = self.sessions.get(tool.spec_name)
+            if not session:
+                session = requests.Session()
+                self.sessions[tool.spec_name] = session
+            
+            # Prepare request data
+            request_data = None
+            query_params = {}
+            
+            for param_name, value in arguments.items():
+                if param_name == 'body':
+                    request_data = value
+                elif param_name in tool.parameters and not param_name.startswith('header_'):
+                    param_info = tool.parameters[param_name]
+                    if param_info.get('type') != 'object':
+                        # Only add to query params if it's not a path parameter
+                        placeholder = f"{{{param_name}}}"
+                        if placeholder not in tool.path:
+                            query_params[param_name] = value
+            
+            # Make request
             logger.info(f"Making {tool.method} request to {url}")
             logger.debug(f"Query params: {query_params}")
             logger.debug(f"Request data: {request_data}")
@@ -408,7 +472,7 @@ class MCPServer:
                 headers=headers,
                 params=query_params if query_params else None,
                 json=request_data if request_data else None,
-                timeout=config.REQUEST_TIMEOUT,
+                timeout=getattr(config, 'REQUEST_TIMEOUT', 30),
                 verify=False
             )
             
@@ -444,6 +508,12 @@ class MCPServer:
                 "status": "error",
                 "message": error_msg,
                 "status_code": status_code
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error executing tool {tool_name}: {e}", exc_info=True)
+            return {
+                "status": "error",
+                "message": f"Unexpected error: {str(e)}"
             }
     
     def set_credentials(self, username: str, password: str, 
@@ -526,27 +596,31 @@ class MCPServer:
         logger.info(f"Loaded {len(self.api_specs)} API specifications")
         logger.info(f"Registered {len(self.api_tools)} MCP tools")
         
-        async with stdio_server() as (read_stream, write_stream):
-            await self.server.run(
-                read_stream,
-                write_stream,
-                InitializationOptions(
-                    server_name="openapi-mcp-server",
-                    server_version="1.0.0",
-                    capabilities=self.server.get_capabilities(
-                        notification_options=None,
-                        experimental_capabilities=None,
+        try:
+            async with stdio_server() as (read_stream, write_stream):
+                await self.server.run(
+                    read_stream,
+                    write_stream,
+                    InitializationOptions(
+                        server_name="openapi-mcp-server",
+                        server_version="1.0.0",
+                        capabilities=self.server.get_capabilities(
+                            notification_options=NotificationOptions(),
+                            experimental_capabilities=None,
+                        ),
                     ),
-                ),
-            )
+                )
+        except Exception as e:
+            logger.error(f"Error in server run loop: {e}")
+            raise
 
 
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="OpenAPI MCP Server")
     parser.add_argument("--transport", default="stdio", choices=["stdio", "http"])
-    parser.add_argument("--host", default=config.MCP_HOST)
-    parser.add_argument("--port", type=int, default=config.MCP_PORT)
+    parser.add_argument("--host", default=getattr(config, 'MCP_HOST', 'localhost'))
+    parser.add_argument("--port", type=int, default=getattr(config, 'MCP_PORT', 8080))
     parser.add_argument("--username", help="Username for authentication")
     parser.add_argument("--password", help="Password for authentication")
     parser.add_argument("--api-key-name", help="API key header name")
@@ -555,37 +629,48 @@ def main():
     
     args = parser.parse_args()
     
-    # Validate configuration
-    if not config.validate():
-        return 1
-    
-    # Create and configure server
-    server = MCPServer()
-    
-    # Set credentials if provided
-    if args.username and args.password:
-        server.set_credentials(
-            username=args.username,
-            password=args.password,
-            api_key_name=args.api_key_name,
-            api_key_value=args.api_key_value,
-            login_url=args.login_url
-        )
-    
-    if args.transport == "stdio":
-        try:
-            asyncio.run(server.run())
-        except KeyboardInterrupt:
-            logger.info("Server shutdown by user")
-        except Exception as e:
-            logger.error(f"Server error: {e}")
+    try:
+        # Validate configuration
+        if not config.validate():
+            logger.error("Configuration validation failed")
             return 1
-    else:
-        # HTTP transport (for backward compatibility)
-        logger.warning("HTTP transport is deprecated. Use stdio for proper MCP protocol.")
+        
+        # Create and configure server
+        server = MCPServer()
+        
+        # Set credentials if provided
+        if args.username and args.password:
+            server.set_credentials(
+                username=args.username,
+                password=args.password,
+                api_key_name=args.api_key_name,
+                api_key_value=args.api_key_value,
+                login_url=args.login_url
+            )
+        
+        if args.transport == "stdio":
+            try:
+                # Run with proper exception handling
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(server.run())
+            except KeyboardInterrupt:
+                logger.info("Server shutdown by user")
+            except Exception as e:
+                logger.error(f"Server error: {e}", exc_info=True)
+                return 1
+            finally:
+                loop.close()
+        else:
+            # HTTP transport (for backward compatibility)
+            logger.warning("HTTP transport is deprecated. Use stdio for proper MCP protocol.")
+            return 1
+        
+        return 0
+        
+    except Exception as e:
+        logger.error(f"Failed to start server: {e}", exc_info=True)
         return 1
-    
-    return 0
 
 
 if __name__ == "__main__":
