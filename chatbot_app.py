@@ -368,11 +368,14 @@ if __name__ == "__main__":
     # Start server
     # host and port are now derived from argparse and config globally
     
-    logger.info(f"Starting chatbot server on {CHATBOT_HOST}:{CHATBOT_PORT}")
-    uvicorn.run(
-        "chatbot_app:app",
-        host=CHATBOT_HOST,
-        port=CHATBOT_PORT,
-        log_level=config.LOG_LEVEL.lower(),
-        reload=False
-    )
+    # logger.info(f"Starting chatbot server on {CHATBOT_HOST}:{CHATBOT_PORT}")
+    # uvicorn.run(
+    #     "chatbot_app:app",
+    #     host=CHATBOT_HOST,
+    #     port=CHATBOT_PORT,
+    #     log_level=config.LOG_LEVEL.lower(),
+    #     reload=False
+    # )
+
+    logger.info("Starting uvicorn for chatbot_app on 0.0.0.0:8080")
+    uvicorn.run("chatbot_app:app", host="0.0.0.0", port=8080, reload=True, log_level="info")
