@@ -238,6 +238,16 @@ class MCPServer:
                 }
             ))
             
+            # Add perform_login tool
+            tools.append(Tool(
+                name="perform_login",
+                description="Perform authentication login using stored credentials.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False
+                }
+            ))
 
             
             return tools
@@ -267,6 +277,17 @@ class MCPServer:
                 except Exception as e:
                     logger.error(f"Error setting credentials: {e}")
                     return [TextContent(type="text", text=f"Error setting credentials: {str(e)}")]
+            elif name == "perform_login":
+                try:
+                    success = self._perform_login()
+                    if success:
+                        response = {"status": "success", "message": "Login performed successfully"}
+                    else:
+                        response = {"status": "error", "message": "Login failed"}
+                    return [TextContent(type="text", text=json.dumps(response, indent=2))]
+                except Exception as e:
+                    logger.error(f"Error performing login: {e}")
+                    return [TextContent(type="text", text=f"Error performing login: {str(e)}")]
             
             if name not in self.api_tools:
                 logger.warning(f"Tool not found: {name}")

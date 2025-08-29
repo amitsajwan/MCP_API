@@ -198,6 +198,22 @@ class MCPClient:
         """Call a specific tool on the MCP server using MCP protocol."""
         if not self.session:
             await self.connect()
+
+    async def perform_login(self) -> Dict[str, Any]:
+        """Call the perform_login tool on the MCP server."""
+        logger.info("Attempting to perform login via MCP server tool.")
+        try:
+            result = await self.call_tool("perform_login")
+            if result.get("status") == "success":
+                logger.info("✅ Login tool call successful.")
+                return {"status": "success", "message": "Login successful"}
+            else:
+                error_message = result.get("message", "Unknown error during login tool call.")
+                logger.error(f"❌ Login tool call failed: {error_message}")
+                return {"status": "error", "message": error_message}
+        except Exception as e:
+            logger.error(f"Exception when calling perform_login tool: {e}")
+            return {"status": "error", "message": str(e)}
         
         if arguments is None:
             arguments = {}

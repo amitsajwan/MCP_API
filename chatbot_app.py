@@ -303,12 +303,10 @@ async def list_tools():
 
 
 class CredentialsRequest(BaseModel):
-    """Credentials configuration request."""
+    """Credentials configuration request (values sourced from environment variables)."""
     username: str
     password: str
-    login_url: str
-    api_key_name: Optional[str] = None
-    api_key_value: Optional[str] = None
+
 
 
 @app.post("/credentials")
@@ -328,13 +326,13 @@ async def set_credentials(credentials: CredentialsRequest):
             {
                 "username": credentials.username,
                 "password": credentials.password,
-                "api_key_name": credentials.api_key_name,
-                "api_key_value": credentials.api_key_value,
-                "login_url": credentials.login_url
+                "api_key_name": getattr(config, 'DEFAULT_API_KEY_NAME', None),
+                "api_key_value": getattr(config, 'DEFAULT_API_KEY_VALUE', None),
+                "login_url": getattr(config, 'DEFAULT_LOGIN_URL', None)
             }
         )
         print(f" ========== {tool_response}")
-        if not tool_response.get('success'):
+        if tool_response.get('status') != 'success':
             raise ValueError(f"Failed to set credentials: {tool_response.get('message')}")
         return {"status": "success", "message": "Credentials stored successfully"}
     except Exception as e:
@@ -350,7 +348,7 @@ async def login():
     
     try:
         result = await mcp_client.perform_login()
-        if result.get("success"):
+        if result.get("status") == "success":
             return {"status": "success", "message": "Login successful"}
         else:
             return {"status": "error", "message": result.get("message", "Login failed")}
@@ -368,14 +366,13 @@ if __name__ == "__main__":
         exit(1)
     
     # Start server
-    host = getattr(config, 'CHATBOT_HOST', 'localhost')
-    port = getattr(config, 'CHATBOT_PORT', 8000)
+    # host and port are now derived from argparse and config globally
     
-    logger.info(f"Starting chatbot server on {host}:{port}")
+    logger.info(f"Starting chatbot server on {CHATBOT_HOST}:{CHATBOT_PORT}")
     uvicorn.run(
         "chatbot_app:app",
-        host=host,
-        port=port,
+        host=CHATBOT_HOST,
+        port=CHATBOT_PORT,
         log_level=config.LOG_LEVEL.lower(),
         reload=False
     )
