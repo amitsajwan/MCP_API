@@ -15,7 +15,7 @@ import sys
 import os
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
-from openai import AsyncOpenAI
+from openai import AzureOpenAI
 
 # MCP Protocol imports
 from mcp import ClientSession, StdioServerParameters
@@ -29,11 +29,8 @@ except ImportError:
     # Create default config if not available
     class DefaultConfig:
         LOG_LEVEL = "INFO"
-        AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
         AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
         AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
-        USE_AZURE_AD_TOKEN_PROVIDER = False
-        AZURE_AD_TOKEN_SCOPE = "https://cognitiveservices.azure.com/.default"
         MAX_TOOL_EXECUTIONS = 5
         
         def validate(self):
@@ -77,11 +74,8 @@ class MCPClient:
         self._session_context = None
         self._stdio_streams = None
         
-        # Initialize OpenAI client based on authentication mode
-        if getattr(config, 'USE_AZURE_AD_TOKEN_PROVIDER', False):
-            self.openai_client = self._create_azure_ad_client()
-        else:
-            self.openai_client = self._create_api_key_client()
+        # Initialize Azure OpenAI client
+        self.openai_client = self._create_azure_client()
         
         # Cache for tools and results
         self.available_tools: List[Tool] = []
@@ -89,57 +83,19 @@ class MCPClient:
         
 
     
-    def _create_azure_ad_client(self) -> AsyncOpenAI:
-        """Create Azure OpenAI client with Azure AD token provider."""
-        try:
-            from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-            
-            # Create token provider
-            token_provider = get_bearer_token_provider(
-                DefaultAzureCredential(), 
-                config.AZURE_AD_TOKEN_SCOPE
-            )
-            
-            # Create Azure OpenAI client with token provider
-            client = AsyncOpenAI(
-                base_url=config.AZURE_OPENAI_ENDPOINT,
-                azure_ad_token_provider=token_provider
-            )
-            
-            logger.info("✅ Azure OpenAI client created with Azure AD token provider")
-            return client
-            
-        except ImportError:
-            logger.error("❌ azure-identity package not found. Install with: pip install azure-identity")
-            raise
-        except Exception as e:
-            logger.error(f"❌ Failed to create Azure AD client: {e}")
-            raise
-    
-    def _create_api_key_client(self) -> AsyncOpenAI:
-        """Create Azure OpenAI client with API key authentication."""
-        if not config.AZURE_OPENAI_API_KEY or not config.AZURE_OPENAI_ENDPOINT:
-            logger.warning("Azure OpenAI credentials not configured, using mock client")
-            return self._create_mock_client()
+    def _create_azure_client(self) -> AzureOpenAI:
+        """Create Azure OpenAI client."""
+        if not config.AZURE_OPENAI_ENDPOINT:
+            logger.warning("Azure OpenAI endpoint not configured")
+            raise ValueError("Azure OpenAI endpoint is required")
         
-        client = AsyncOpenAI(
-            api_key=config.AZURE_OPENAI_API_KEY,
-            base_url=config.AZURE_OPENAI_ENDPOINT,
-            default_headers={'api-key': config.AZURE_OPENAI_API_KEY}
+        client = AzureOpenAI(
+            azure_endpoint=config.AZURE_OPENAI_ENDPOINT,
+            api_version="2024-02-01"
         )
         
-        logger.info("✅ Azure OpenAI client created with API key authentication")
+        logger.info("✅ Azure OpenAI client created")
         return client
-    
-    def _create_mock_client(self) -> AsyncOpenAI:
-        """Create a mock OpenAI client for testing."""
-        # This is a fallback for when credentials aren't configured
-        # In production, you should always have proper credentials
-        logger.warning("Creating mock OpenAI client - responses may be limited")
-        return AsyncOpenAI(
-            api_key="sk-mock-key",
-            base_url="https://api.openai.com/v1"
-        )
     
     async def connect(self):
         """Connect to MCP server using stdio transport."""
@@ -238,17 +194,20 @@ class MCPClient:
             logger.error(f"Error listing tools: {e}")
             return []
     
-    async def call_tool(self, tool_name: str, **kwargs) -> Dict[str, Any]:
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
         """Call a specific tool on the MCP server using MCP protocol."""
         if not self.session:
             await self.connect()
+        
+        if arguments is None:
+            arguments = {}
         
         try:
             print (" ==== >>>>> ")
             # Execute tool via MCP protocol
             result = await self.session.call_tool(
                 name=tool_name,
-                arguments=kwargs
+                arguments=arguments
             )
             print (f" ==== >>>>> {result}")
             # Process result
@@ -335,7 +294,7 @@ Example reasoning:
 Make your reasoning clear and helpful for the user to understand your thought process."""
 
         try:
-            response = await self.openai_client.chat.completions.create(
+            response = self.openai_client.chat.completions.create(
                 model=config.AZURE_OPENAI_DEPLOYMENT,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -477,7 +436,7 @@ Focus on being:
 Use the execution results to provide concrete information rather than generic responses."""
 
         try:
-            response = await self.openai_client.chat.completions.create(
+            response = self.openai_client.chat.completions.create(
                 model=config.AZURE_OPENAI_DEPLOYMENT,
                 messages=[
                     {"role": "system", "content": system_prompt},
