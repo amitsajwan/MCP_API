@@ -90,6 +90,7 @@ class MCPServer:
     """Real MCP Server implementation using official MCP protocol."""
     
     def __init__(self):
+        logger.info("🚀 Initializing MCP Server...")
         self.server = Server("openapi-mcp-server")
         self.api_specs: Dict[str, APISpec] = {}
         self.api_tools: Dict[str, APITool] = {}
@@ -103,8 +104,11 @@ class MCPServer:
         self.login_url: Optional[str] = None
         
         # Initialize
+        logger.info("📂 Loading API specifications...")
         self._load_api_specs()
+        logger.info("🔧 Registering MCP tools...")
         self._register_mcp_tools()
+        logger.info(f"✅ MCP Server initialized with {len(self.api_tools)} tools from {len(self.api_specs)} API specs")
     
     def _load_api_specs(self):
         """Load OpenAPI specifications from directory."""
@@ -255,6 +259,8 @@ class MCPServer:
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict) -> List[TextContent]:
             """Call an MCP tool by name."""
+            logger.info(f"🔧 Executing tool: {name} with arguments: {list(arguments.keys())}")
+            
             if name == "set_credentials":
                 try:
                     username = arguments.get("username")
@@ -272,17 +278,20 @@ class MCPServer:
                         "login_url": login_url or config.DEFAULT_LOGIN_URL
                     }
                     
+                    logger.info(f"✅ Credentials set successfully for user: {username}")
                     return [TextContent(type="text", text=json.dumps(response, indent=2))]
                     
                 except Exception as e:
-                    logger.error(f"Error setting credentials: {e}")
+                    logger.error(f"❌ Error setting credentials: {e}")
                     return [TextContent(type="text", text=f"Error setting credentials: {str(e)}")]
             elif name == "perform_login":
                 try:
                     success = self._perform_login()
                     if success:
+                        logger.info("✅ Login performed successfully")
                         response = {"status": "success", "message": "Login performed successfully"}
                     else:
+                        logger.warning("⚠️ Login failed")
                         response = {"status": "error", "message": "Login failed"}
                     return [TextContent(type="text", text=json.dumps(response, indent=2))]
                 except Exception as e:
@@ -318,11 +327,15 @@ class MCPServer:
     def _register_spec_tools(self, spec_name: str, api_spec: APISpec):
         """Register tools for a specific API specification."""
         paths = api_spec.spec.get('paths', {})
+        tool_count = 0
         
         for path, path_item in paths.items():
             for method, operation in path_item.items():
                 if method.lower() in ['get', 'post', 'put', 'delete', 'patch']:
                     self._register_mcp_tool(spec_name, method, path, operation, api_spec.base_url)
+                    tool_count += 1
+        
+        logger.info(f"📋 Registered {tool_count} tools from {spec_name} API spec")
     
     def _register_mcp_tool(self, spec_name: str, method: str, path: str, operation: Dict[str, Any], base_url: str):
         """Register a single API endpoint as an MCP tool."""
@@ -364,6 +377,7 @@ class MCPServer:
         )
         
         self.api_tools[tool_name] = api_tool
+        logger.debug(f"🔧 Registered tool: {tool_name} ({method.upper()} {path})")
         
         logger.debug(f"Registered MCP tool: {tool_name}")
     
