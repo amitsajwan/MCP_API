@@ -1,27 +1,21 @@
-# Core dependencies
+# FastMCP 2.0 Requirements
+# Core MCP and FastAPI
 fastapi>=0.104.0
-uvicorn>=0.24.0
-pydantic>=2.0.0
-python-dotenv>=1.0.0
-
-# HTTP and networking
-aiohttp>=3.9.0
-requests>=2.31.0
-
-# WebSocket support
-websockets>=12.0
-
-# MCP Protocol (Official)
+uvicorn[standard]>=0.24.0
+websockets>=11.0
 mcp>=1.0.0
 
-# OpenAI
+# Azure OpenAI and Authentication  
 openai>=1.0.0
-
-# Azure Identity for Azure AD token provider
 azure-identity>=1.15.0
 
-# Data processing
-pyyaml>=6.0.1
+# Data handling
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+pyyaml>=6.0
+requests>=2.31.0
 
-# Optional dependencies
-# openapi-spec-validator>=0.7.0  # Uncomment if you need OpenAPI validation
+# Development (optional)
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
