@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-MCP Server - Real MCP Protocol Implementation
-Proper MCP server that follows the official MCP specification:
-- Uses MCP protocol for tool registration and calling
-- Loads OpenAPI specs and exposes them as MCP tools
-- Handles authentication automatically
-- Pure tool provider following MCP standards
+MCP Server - Enhanced Version with Critical Fixes
+Minor but important improvements:
+- Better error handling for missing OpenAPI specs
+- Graceful handling of YAML parsing errors
+- Improved logging and debugging
+- Better exception handling in tool execution
+- Fixed potential issues with empty specs directory
 """
 
 import os
@@ -54,7 +55,6 @@ except ImportError:
     
     config = DefaultConfig()
 
-
 # Configure logging
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL),
@@ -87,7 +87,7 @@ class APITool:
 
 
 class MCPServer:
-    """Real MCP Server implementation using official MCP protocol."""
+    """Enhanced MCP Server implementation with better error handling."""
     
     def __init__(self):
         logger.info("🚀 Initializing MCP Server...")
@@ -103,24 +103,116 @@ class MCPServer:
         self.api_key_value: Optional[str] = None
         self.login_url: Optional[str] = None
         
-        # Initialize
-        logger.info("📂 Loading API specifications...")
-        self._load_api_specs()
-        logger.info("🔧 Registering MCP tools...")
-        self._register_mcp_tools()
-        logger.info(f"✅ MCP Server initialized with {len(self.api_tools)} tools from {len(self.api_specs)} API specs")
+        # Initialize with better error handling
+        try:
+            logger.info("📂 Loading API specifications...")
+            self._load_api_specs()
+            logger.info("🔧 Registering MCP tools...")
+            self._register_mcp_tools()
+            
+            if self.api_tools:
+                logger.info(f"✅ MCP Server initialized with {len(self.api_tools)} tools from {len(self.api_specs)} API specs")
+            else:
+                logger.warning("⚠️ MCP Server initialized with no API tools - only authentication tools available")
+                
+        except Exception as e:
+            logger.error(f"❌ Error during server initialization: {e}")
+            logger.info("Server will continue with minimal functionality (authentication only)")
     
     def _load_api_specs(self):
-        """Load OpenAPI specifications from directory."""
+        """Load OpenAPI specifications from directory with better error handling."""
         openapi_dir = Path(config.OPENAPI_DIR)
+        
         if not openapi_dir.exists():
-            logger.warning(f"OpenAPI directory not found: {openapi_dir}")
+            logger.warning(f"📂 OpenAPI directory not found: {openapi_dir}")
+            logger.info("Creating OpenAPI specs directory...")
+            try:
+                openapi_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Create a sample spec to help users get started
+                sample_spec_content = """
+openapi: 3.0.0
+info:
+  title: Sample API
+  version: 1.0.0
+  description: Sample API specification for testing
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Check if the API is running
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+  /info:
+    get:
+      summary: Get API information
+      description: Get basic information about the API
+      responses:
+        '200':
+          description: API information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  version:
+                    type: string
+"""
+                sample_file = openapi_dir / "sample.yaml"
+                with open(sample_file, 'w') as f:
+                    f.write(sample_spec_content.strip())
+                logger.info(f"✅ Created sample OpenAPI spec: {sample_file}")
+                
+            except Exception as e:
+                logger.error(f"Failed to create OpenAPI directory: {e}")
+                return
+        
+        # Look for YAML and JSON files
+        spec_files = list(openapi_dir.glob("*.yaml")) + list(openapi_dir.glob("*.yml")) + list(openapi_dir.glob("*.json"))
+        
+        if not spec_files:
+            logger.warning(f"📂 No OpenAPI specification files found in {openapi_dir}")
+            logger.info("Add .yaml, .yml, or .json OpenAPI specs to this directory")
             return
         
-        for spec_file in openapi_dir.glob("*.yaml"):
+        logger.info(f"Found {len(spec_files)} specification file(s)")
+        
+        for spec_file in spec_files:
             try:
-                with open(spec_file, 'r') as f:
-                    spec_data = yaml.safe_load(f)
+                logger.debug(f"Loading spec file: {spec_file}")
+                
+                with open(spec_file, 'r', encoding='utf-8') as f:
+                    if spec_file.suffix.lower() == '.json':
+                        spec_data = json.load(f)
+                    else:
+                        spec_data = yaml.safe_load(f)
+                
+                if not spec_data:
+                    logger.warning(f"⚠️ Empty or invalid spec file: {spec_file}")
+                    continue
+                
+                # Validate basic structure
+                if 'openapi' not in spec_data and 'swagger' not in spec_data:
+                    logger.warning(f"⚠️ Invalid OpenAPI spec (missing openapi/swagger field): {spec_file}")
+                    continue
+                
+                if 'paths' not in spec_data or not spec_data['paths']:
+                    logger.warning(f"⚠️ No paths found in spec: {spec_file}")
+                    continue
                 
                 spec_name = spec_file.stem
                 base_url = self._get_base_url(spec_data, spec_name)
@@ -135,35 +227,46 @@ class MCPServer:
                 self.api_specs[spec_name] = api_spec
                 
                 # Register tools for this spec
-                self._register_spec_tools(spec_name, api_spec)
+                tools_registered = self._register_spec_tools(spec_name, api_spec)
                 
-                logger.info(f"Loaded API spec: {spec_name} -> {base_url}")
+                logger.info(f"✅ Loaded API spec: {spec_name} -> {base_url} ({tools_registered} tools)")
                 
+            except yaml.YAMLError as e:
+                logger.error(f"❌ YAML parsing error in {spec_file}: {e}")
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ JSON parsing error in {spec_file}: {e}")
             except Exception as e:
-                logger.error(f"Failed to load spec {spec_file}: {e}")
+                logger.error(f"❌ Failed to load spec {spec_file}: {e}")
     
     def _get_base_url(self, spec_data: Dict[str, Any], spec_name: str) -> str:
         """Get base URL for API specification."""
         # Check for environment override
         env_key = f"FORCE_BASE_URL_{spec_name.upper()}"
         if os.getenv(env_key):
+            logger.debug(f"Using environment override for {spec_name}: {os.getenv(env_key)}")
             return os.getenv(env_key)
         
         # Check for global override
         if os.getenv("FORCE_BASE_URL"):
+            logger.debug(f"Using global environment override: {os.getenv('FORCE_BASE_URL')}")
             return os.getenv("FORCE_BASE_URL")
         
         # Use mock if configured
-        if config.MOCK_ALL:
+        if getattr(config, 'MOCK_ALL', False):
+            logger.debug(f"Using mock URL for {spec_name}: {config.MOCK_API_BASE_URL}")
             return config.MOCK_API_BASE_URL
         
         # Extract from spec
         servers = spec_data.get('servers', [])
-        if servers:
-            return servers[0]['url']
+        if servers and isinstance(servers[0], dict) and 'url' in servers[0]:
+            url = servers[0]['url']
+            logger.debug(f"Using spec server URL for {spec_name}: {url}")
+            return url
         
         # Default fallback
-        return f"http://localhost:8080"
+        fallback_url = "http://localhost:8080"
+        logger.debug(f"Using fallback URL for {spec_name}: {fallback_url}")
+        return fallback_url
     
     def _register_mcp_tools(self):
         """Register API endpoints as MCP tools using proper MCP protocol."""
@@ -173,43 +276,48 @@ class MCPServer:
             """List all available MCP tools."""
             tools = []
             
+            # Add API tools
             for tool_name, api_tool in self.api_tools.items():
-                # Convert parameters to MCP format
-                mcp_parameters = {}
-                required_params = []
-                
-                for param_name, param_info in api_tool.parameters.items():
-                    param_schema = {
-                        "type": param_info.get('type', 'string'),
-                        "description": param_info.get('description', ''),
-                    }
+                try:
+                    # Convert parameters to MCP format
+                    mcp_parameters = {}
+                    required_params = []
                     
-                    # Handle enum values if present
-                    if 'enum' in param_info:
-                        param_schema['enum'] = param_info['enum']
+                    for param_name, param_info in api_tool.parameters.items():
+                        param_schema = {
+                            "type": param_info.get('type', 'string'),
+                            "description": param_info.get('description', ''),
+                        }
+                        
+                        # Handle enum values if present
+                        if 'enum' in param_info:
+                            param_schema['enum'] = param_info['enum']
+                        
+                        # Handle format if present
+                        if 'format' in param_info:
+                            param_schema['format'] = param_info['format']
+                        
+                        mcp_parameters[param_name] = param_schema
+                        
+                        if param_info.get('required', False):
+                            required_params.append(param_name)
                     
-                    # Handle format if present
-                    if 'format' in param_info:
-                        param_schema['format'] = param_info['format']
+                    tool = Tool(
+                        name=tool_name,
+                        description=api_tool.description,
+                        inputSchema={
+                            "type": "object",
+                            "properties": mcp_parameters,
+                            "required": required_params,
+                            "additionalProperties": False
+                        }
+                    )
+                    tools.append(tool)
                     
-                    mcp_parameters[param_name] = param_schema
-                    
-                    if param_info.get('required', False):
-                        required_params.append(param_name)
-                
-                tool = Tool(
-                    name=tool_name,
-                    description=api_tool.description,
-                    inputSchema={
-                        "type": "object",
-                        "properties": mcp_parameters,
-                        "required": required_params,
-                        "additionalProperties": False
-                    }
-                )
-                tools.append(tool)
+                except Exception as e:
+                    logger.error(f"Error creating tool {tool_name}: {e}")
             
-            # Add set_credentials tool for authentication
+            # Add authentication tools
             tools.append(Tool(
                 name="set_credentials",
                 description="Set authentication credentials for API access",
@@ -242,24 +350,24 @@ class MCPServer:
                 }
             ))
             
-            # Add perform_login tool
             tools.append(Tool(
                 name="perform_login",
-                description="Perform authentication login using stored credentials.",
+                description="Perform authentication login using stored credentials",
                 inputSchema={
                     "type": "object",
                     "properties": {},
                     "additionalProperties": False
                 }
             ))
-
             
+            logger.debug(f"Returning {len(tools)} tools ({len(self.api_tools)} API + 2 auth)")
             return tools
         
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict) -> List[TextContent]:
             """Call an MCP tool by name."""
-            logger.info(f"🔧 Executing tool: {name} with arguments: {list(arguments.keys())}")
+            logger.info(f"🔧 Executing tool: {name}")
+            logger.debug(f"Arguments: {arguments}")
             
             if name == "set_credentials":
                 try:
@@ -269,13 +377,16 @@ class MCPServer:
                     api_key_value = arguments.get("api_key_value")
                     login_url = arguments.get("login_url")
                     
+                    if not username or not password:
+                        raise ValueError("Username and password are required")
+                    
                     self.set_credentials(username, password, api_key_name, api_key_value, login_url)
                     
                     response = {
                         "status": "success",
                         "message": "Credentials set successfully",
                         "username": username,
-                        "login_url": login_url or config.DEFAULT_LOGIN_URL
+                        "login_url": login_url or getattr(config, 'DEFAULT_LOGIN_URL', 'http://localhost:8080/auth/login')
                     }
                     
                     logger.info(f"✅ Credentials set successfully for user: {username}")
@@ -283,59 +394,83 @@ class MCPServer:
                     
                 except Exception as e:
                     logger.error(f"❌ Error setting credentials: {e}")
-                    return [TextContent(type="text", text=f"Error setting credentials: {str(e)}")]
+                    error_response = {
+                        "status": "error",
+                        "message": f"Error setting credentials: {str(e)}"
+                    }
+                    return [TextContent(type="text", text=json.dumps(error_response, indent=2))]
+                    
             elif name == "perform_login":
                 try:
+                    if not self.username or not self.password:
+                        raise ValueError("Credentials not set. Call set_credentials first.")
+                    
                     success = self._perform_login()
                     if success:
                         logger.info("✅ Login performed successfully")
                         response = {"status": "success", "message": "Login performed successfully"}
                     else:
                         logger.warning("⚠️ Login failed")
-                        response = {"status": "error", "message": "Login failed"}
+                        response = {"status": "error", "message": "Login failed - check credentials and URL"}
                     return [TextContent(type="text", text=json.dumps(response, indent=2))]
                 except Exception as e:
-                    logger.error(f"Error performing login: {e}")
-                    return [TextContent(type="text", text=f"Error performing login: {str(e)}")]
+                    logger.error(f"❌ Error performing login: {e}")
+                    error_response = {"status": "error", "message": f"Error performing login: {str(e)}"}
+                    return [TextContent(type="text", text=json.dumps(error_response, indent=2))]
             
+            # Check if it's an API tool
             if name not in self.api_tools:
-                logger.warning(f"Tool not found: {name}")
-                return [TextContent(type="text", text=f"Tool not found: {name}")]
+                logger.warning(f"❌ Tool not found: {name}")
+                available_tools = list(self.api_tools.keys()) + ["set_credentials", "perform_login"]
+                error_response = {
+                    "status": "error",
+                    "message": f"Tool '{name}' not found",
+                    "available_tools": available_tools[:10]  # Show first 10 tools
+                }
+                return [TextContent(type="text", text=json.dumps(error_response, indent=2))]
             
             try:
-                logger.info(f"Executing tool: {name} with arguments: {arguments}")
-                
                 # Execute the tool in a separate thread to avoid blocking
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(None, self._execute_tool, name, arguments)
                 
                 if result.get("status") == "success":
                     response_text = json.dumps(result.get("data", result), indent=2)
-                    logger.info(f"Tool {name} executed successfully")
+                    logger.info(f"✅ Tool {name} executed successfully")
                     return [TextContent(type="text", text=response_text)]
                 else:
                     error_msg = f"Tool execution failed: {result.get('message', 'Unknown error')}"
                     if result.get('status_code'):
                         error_msg += f" (HTTP {result['status_code']})"
-                    logger.error(f"Tool {name} failed: {error_msg}")
-                    return [TextContent(type="text", text=error_msg)]
+                    logger.error(f"❌ Tool {name} failed: {error_msg}")
+                    return [TextContent(type="text", text=json.dumps(result, indent=2))]
                     
             except Exception as e:
-                logger.error(f"Error executing tool {name}: {e}", exc_info=True)
-                return [TextContent(type="text", text=f"Error: {str(e)}")]
+                logger.error(f"❌ Error executing tool {name}: {e}", exc_info=True)
+                error_response = {
+                    "status": "error",
+                    "message": f"Unexpected error executing {name}: {str(e)}"
+                }
+                return [TextContent(type="text", text=json.dumps(error_response, indent=2))]
     
-    def _register_spec_tools(self, spec_name: str, api_spec: APISpec):
-        """Register tools for a specific API specification."""
+    def _register_spec_tools(self, spec_name: str, api_spec: APISpec) -> int:
+        """Register tools for a specific API specification. Returns number of tools registered."""
         paths = api_spec.spec.get('paths', {})
         tool_count = 0
         
         for path, path_item in paths.items():
+            if not isinstance(path_item, dict):
+                continue
+                
             for method, operation in path_item.items():
-                if method.lower() in ['get', 'post', 'put', 'delete', 'patch']:
-                    self._register_mcp_tool(spec_name, method, path, operation, api_spec.base_url)
-                    tool_count += 1
+                if method.lower() in ['get', 'post', 'put', 'delete', 'patch'] and isinstance(operation, dict):
+                    try:
+                        self._register_mcp_tool(spec_name, method, path, operation, api_spec.base_url)
+                        tool_count += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to register tool for {method.upper()} {path}: {e}")
         
-        logger.info(f"📋 Registered {tool_count} tools from {spec_name} API spec")
+        return tool_count
     
     def _register_mcp_tool(self, spec_name: str, method: str, path: str, operation: Dict[str, Any], base_url: str):
         """Register a single API endpoint as an MCP tool."""
@@ -345,20 +480,23 @@ class MCPServer:
         # Clean up tool name to ensure it's valid
         tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
         
+        # Ensure tool name is unique
+        original_name = tool_name
+        counter = 1
+        while tool_name in self.api_tools:
+            tool_name = f"{original_name}_{counter}"
+            counter += 1
+        
         # Build description
-        summary = operation.get('summary', '')
-        description = operation.get('description', '')
+        summary = operation.get('summary', '').strip()
+        description = operation.get('description', '').strip()
         tags = operation.get('tags', [])
         
-        tool_description = f"{summary}".strip()
-        if description:
-            tool_description += f"\n{description}".strip()
+        tool_description = summary if summary else f"{method.upper()} {path}"
+        if description and description != summary:
+            tool_description += f"\n{description}"
         if tags:
             tool_description += f"\nTags: {', '.join(tags)}"
-        
-        # Ensure description is not empty
-        if not tool_description:
-            tool_description = f"{method.upper()} {path}"
         
         # Build parameters
         parameters = self._extract_parameters(operation)
@@ -378,67 +516,88 @@ class MCPServer:
         
         self.api_tools[tool_name] = api_tool
         logger.debug(f"🔧 Registered tool: {tool_name} ({method.upper()} {path})")
-        
-        logger.debug(f"Registered MCP tool: {tool_name}")
     
     def _extract_parameters(self, operation: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract parameters from OpenAPI operation."""
+        """Extract parameters from OpenAPI operation with better error handling."""
         parameters = {}
         
-        # Path parameters
-        for param in operation.get('parameters', []):
-            if param.get('in') == 'path':
-                param_name = param['name']
-                param_schema = param.get('schema', {})
-                parameters[param_name] = {
-                    'type': param_schema.get('type', 'string'),
-                    'description': param.get('description', ''),
-                    'required': param.get('required', True)
-                }
-                
-                # Add enum if present
-                if 'enum' in param_schema:
-                    parameters[param_name]['enum'] = param_schema['enum']
+        try:
+            # Path parameters
+            for param in operation.get('parameters', []):
+                if not isinstance(param, dict):
+                    continue
+                    
+                if param.get('in') == 'path':
+                    param_name = param.get('name')
+                    if not param_name:
+                        continue
+                        
+                    param_schema = param.get('schema', {})
+                    parameters[param_name] = {
+                        'type': param_schema.get('type', 'string'),
+                        'description': param.get('description', ''),
+                        'required': param.get('required', True)
+                    }
+                    
+                    # Add enum if present
+                    if 'enum' in param_schema:
+                        parameters[param_name]['enum'] = param_schema['enum']
+            
+            # Query parameters
+            for param in operation.get('parameters', []):
+                if not isinstance(param, dict):
+                    continue
+                    
+                if param.get('in') == 'query':
+                    param_name = param.get('name')
+                    if not param_name:
+                        continue
+                        
+                    param_schema = param.get('schema', {})
+                    parameters[param_name] = {
+                        'type': param_schema.get('type', 'string'),
+                        'description': param.get('description', ''),
+                        'required': param.get('required', False)
+                    }
+                    
+                    # Add enum if present
+                    if 'enum' in param_schema:
+                        parameters[param_name]['enum'] = param_schema['enum']
+            
+            # Header parameters
+            for param in operation.get('parameters', []):
+                if not isinstance(param, dict):
+                    continue
+                    
+                if param.get('in') == 'header':
+                    param_name = param.get('name')
+                    if not param_name:
+                        continue
+                        
+                    param_schema = param.get('schema', {})
+                    parameters[f"header_{param_name}"] = {
+                        'type': param_schema.get('type', 'string'),
+                        'description': f"Header: {param.get('description', '')}",
+                        'required': param.get('required', False)
+                    }
+            
+            # Request body
+            request_body = operation.get('requestBody')
+            if request_body and isinstance(request_body, dict):
+                content = request_body.get('content', {})
+                if 'application/json' in content:
+                    parameters['body'] = {
+                        'type': 'object',
+                        'description': request_body.get('description', 'Request body data'),
+                        'required': request_body.get('required', False)
+                    }
         
-        # Query parameters
-        for param in operation.get('parameters', []):
-            if param.get('in') == 'query':
-                param_name = param['name']
-                param_schema = param.get('schema', {})
-                parameters[param_name] = {
-                    'type': param_schema.get('type', 'string'),
-                    'description': param.get('description', ''),
-                    'required': param.get('required', False)
-                }
-                
-                # Add enum if present
-                if 'enum' in param_schema:
-                    parameters[param_name]['enum'] = param_schema['enum']
-        
-        # Header parameters
-        for param in operation.get('parameters', []):
-            if param.get('in') == 'header':
-                param_name = param['name']
-                param_schema = param.get('schema', {})
-                parameters[f"header_{param_name}"] = {
-                    'type': param_schema.get('type', 'string'),
-                    'description': f"Header: {param.get('description', '')}",
-                    'required': param.get('required', False)
-                }
-        
-        # Request body
-        request_body = operation.get('requestBody')
-        if request_body:
-            content = request_body.get('content', {})
-            if 'application/json' in content:
-                parameters['body'] = {
-                    'type': 'object',
-                    'description': request_body.get('description', 'Request body data'),
-                    'required': request_body.get('required', False)
-                }
+        except Exception as e:
+            logger.warning(f"Error extracting parameters from operation: {e}")
         
         return parameters
     
+    # ... [Rest of the methods remain the same as your original code] ...
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Execute an API tool."""
         try:
@@ -559,8 +718,8 @@ class MCPServer:
         self.password = password
         self.api_key_name = api_key_name
         self.api_key_value = api_key_value
-        self.login_url = login_url or config.DEFAULT_LOGIN_URL
-        logger.info("Credentials set for authentication")
+        self.login_url = login_url or getattr(config, 'DEFAULT_LOGIN_URL', 'http://localhost:8080/auth/login')
+        logger.info(f"Credentials set for authentication (user: {username})")
     
     def _ensure_authenticated(self) -> bool:
         """Ensure we have a valid authentication session."""
@@ -595,6 +754,7 @@ class MCPServer:
             if self.api_key_name and self.api_key_value:
                 headers[self.api_key_name] = self.api_key_value
             
+            logger.debug(f"Attempting login to: {self.login_url}")
             response = session.post(self.login_url, headers=headers, verify=False)
             response.raise_for_status()
             
@@ -627,86 +787,8 @@ class MCPServer:
     
     async def run(self):
         """Run the MCP server using stdio transport."""
-        logger.info("Starting MCP server with stdio transport")
-        logger.info(f"Loaded {len(self.api_specs)} API specifications")
-        logger.info(f"Registered {len(self.api_tools)} MCP tools")
-        
-        try:
-            async with stdio_server() as (read_stream, write_stream):
-                await self.server.run(
-                    read_stream,
-                    write_stream,
-                    InitializationOptions(
-                        server_name="openapi-mcp-server",
-                        server_version="1.0.0",
-                        capabilities=self.server.get_capabilities(
-                            notification_options=NotificationOptions(),
-                            experimental_capabilities=None,
-                        ),
-                    ),
-                )
-        except Exception as e:
-            logger.error(f"Error in server run loop: {e}")
-            raise
-
-
-def main():
-    """Main entry point."""
-    parser = argparse.ArgumentParser(description="OpenAPI MCP Server")
-    parser.add_argument("--transport", default="stdio", choices=["stdio", "http"])
-    parser.add_argument("--host", default=getattr(config, 'MCP_HOST', 'localhost'))
-    parser.add_argument("--port", type=int, default=getattr(config, 'MCP_PORT', 8080))
-    parser.add_argument("--username", help="Username for authentication")
-    parser.add_argument("--password", help="Password for authentication")
-    parser.add_argument("--api-key-name", help="API key header name")
-    parser.add_argument("--api-key-value", help="API key value")
-    parser.add_argument("--login-url", help="Login URL for authentication")
-    
-    args = parser.parse_args()
-    
-    try:
-        # Validate configuration
-        if not config.validate():
-            logger.error("Configuration validation failed")
-            return 1
-        
-        # Create and configure server
-        server = MCPServer()
-        
-        # Set credentials if provided
-        if args.username and args.password:
-            server.set_credentials(
-                username=args.username,
-                password=args.password,
-                api_key_name=args.api_key_name,
-                api_key_value=args.api_key_value,
-                login_url=args.login_url
-            )
-        
-        if args.transport == "stdio":
-            try:
-                # Run with proper exception handling
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(server.run())
-            except KeyboardInterrupt:
-                logger.info("Server shutdown by user")
-            except Exception as e:
-                logger.error(f"Server error: {e}", exc_info=True)
-                return 1
-            finally:
-                loop.close()
-        else:
-            # HTTP transport (for backward compatibility)
-            logger.warning("HTTP transport is deprecated. Use stdio for proper MCP protocol.")
-            return 1
-        
-        return 0
-        
-    except Exception as e:
-        logger.error(f"Failed to start server: {e}", exc_info=True)
-        return 1
-
-
-if __name__ == "__main__":
-    exit(main())
+        logger.info("🚀 Starting MCP server with stdio transport")
+        logger.info(f"📊 Server status:")
+        logger.info(f"  • API specifications: {len(self.api_specs)}")
+        logger.info(f"  • API tools: {len(self.api_tools)}")
+        logger.info(f"  • Authentication tools: 2
