@@ -173,7 +173,241 @@ MCP_API/
 ├── launcher.py            # Unified launcher
 ├── config.env.example     # Environment template
 ├── requirements.txt       # Python dependencies
-├── README.md             # This file
+├── # MCP Financial API System
+
+A production-ready Model Context Protocol (MCP) system that provides LLM-powered access to financial APIs with Anthropic Claude-style tool calling capabilities.
+
+## 🚀 **Features**
+
+- **49 Financial Tools**: Automatically loaded from OpenAPI specifications
+- **LLM Tool Calling**: Anthropic Claude-style automatic tool selection and execution
+- **HTTP MCP Server**: Production-ready server with proper REST endpoints
+- **Web Interface**: Real-time chat interface with WebSocket support
+- **Authentication Management**: Credential storage and login handling
+- **Azure OpenAI Integration**: GPT-4 powered tool orchestration and planning
+
+## 📋 **System Architecture**
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Web Interface │◄──►│   MCP Client    │◄──►│   MCP Server    │
+│  (FastAPI App)  │    │  (HTTP Client)  │    │ (HTTP Server)   │
+│  Port 9099      │    │                 │    │  Port 8081      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+## 🛠️ **Quick Start**
+
+### **Prerequisites**
+- Python 3.8+
+- Azure OpenAI API access (optional, for LLM features)
+
+### **Installation**
+
+1. **Clone and setup**:
+```bash
+git clone <repository>
+cd MCP_API
+pip install -r requirements.txt
+```
+
+2. **Configure environment** (copy `config.env.example` to `config.env`):
+```env
+AZURE_OPENAI_ENDPOINT=your_endpoint
+AZURE_OPENAI_API_KEY=your_key
+AZURE_OPENAI_DEPLOYMENT=your_deployment
+```
+
+### **Running the System**
+
+1. **Start MCP Server**:
+```bash
+python mcp_server.py --transport http --port 8081
+```
+
+2. **Start Web Interface**:
+```bash
+python chatbot_app.py
+```
+
+3. **Access the application**:
+   - Web UI: http://localhost:9099
+   - API Documentation: http://localhost:8081/docs
+   - Health Check: http://localhost:9099/health
+
+## 📚 **API Documentation**
+
+### **Web Interface Endpoints**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Web chat interface |
+| `/health` | GET | Health check |
+| `/api/tools` | GET | List available tools |
+| `/credentials` | POST | Set API credentials |
+| `/login` | POST | Perform authentication |
+| `/chat` | POST | Send chat message |
+| `/ws` | WebSocket | Real-time chat |
+
+### **MCP Server Endpoints**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Server health status |
+| `/docs` | GET | Interactive API documentation |
+| `/tools` | GET | Available tools list |
+| `/call_tool` | POST | Execute a specific tool |
+
+## 🧠 **LLM Tool Calling**
+
+The system implements Anthropic Claude-style tool calling:
+
+### **How it works**:
+
+1. **User Query**: "Can you help me set up my credentials?"
+2. **LLM Analysis**: Recognizes need for credential management
+3. **Tool Selection**: Chooses `set_credentials` tool automatically
+4. **Execution**: System calls the tool via MCP protocol
+5. **Response**: LLM integrates results into natural language
+
+### **Example Usage**:
+
+```python
+from mcp_client import MCPClient
+
+client = MCPClient(server_host="localhost", server_port=8081)
+await client.connect()
+
+# LLM automatically selects and calls appropriate tools
+response = await client.chat_with_function_calling(
+    "Show me information about cash management APIs"
+)
+print(response)  # Natural language response with tool results
+```
+
+## 🔧 **Available Tools**
+
+The system automatically loads tools from OpenAPI specifications:
+
+- **Cash APIs** (8 tools): Payment processing, account management
+- **CLS APIs** (11 tools): Continuous Linked Settlement operations
+- **Mailbox APIs** (19 tools): Message and notification handling
+- **Securities APIs** (11 tools): Trading and portfolio management
+
+## 📁 **Project Structure**
+
+```
+MCP_API/
+├── mcp_server.py          # HTTP MCP server
+├── mcp_client.py          # HTTP MCP client with LLM integration
+├── chatbot_app.py         # FastAPI web interface
+├── config.py              # Configuration management
+├── launcher.py            # System launcher utility
+├── simple_ui.html         # Web chat interface
+├── requirements.txt       # Python dependencies
+├── openapi_specs/         # API specifications
+│   ├── cash_api.yaml
+│   ├── cls_api.yaml
+│   ├── mailbox_api.yaml
+│   └── securities_api.yaml
+└── README.md              # This file
+```
+
+## ⚙️ **Configuration**
+
+### **Environment Variables**
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI service endpoint | No* |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key | No* |
+| `AZURE_OPENAI_DEPLOYMENT` | Model deployment name | No* |
+
+*Required for LLM-powered tool calling features
+
+### **Server Configuration**
+
+- **MCP Server Port**: 8081 (configurable)
+- **Web Interface Port**: 9099 (configurable)
+- **Transport**: HTTP (production-ready)
+- **Authentication**: API key and session-based
+
+## 🔐 **Security**
+
+- API credentials stored securely during session
+- CORS protection enabled
+- Input validation on all endpoints
+- Proper error handling and logging
+
+## 🚀 **Deployment**
+
+### **Production Setup**
+
+1. **Configure environment variables**
+2. **Start MCP server** as a service:
+```bash
+python mcp_server.py --transport http --host 0.0.0.0 --port 8081
+```
+
+3. **Start web interface** with production WSGI:
+```bash
+uvicorn chatbot_app:app --host 0.0.0.0 --port 9099
+```
+
+### **Docker Support**
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY . .
+
+EXPOSE 8081 9099
+
+CMD ["python", "launcher.py"]
+```
+
+## 🐛 **Troubleshooting**
+
+### **Common Issues**
+
+1. **Connection Failed**: Ensure MCP server is running on correct port
+2. **No Tools Loaded**: Check OpenAPI specs in `openapi_specs/` directory
+3. **LLM Not Working**: Verify Azure OpenAI configuration
+4. **Port Conflicts**: Change ports in configuration
+
+### **Logging**
+
+Set log level in environment:
+```bash
+export LOG_LEVEL=DEBUG
+```
+
+## 🤝 **Contributing**
+
+1. Fork the repository
+2. Create feature branch
+3. Add tests for new functionality
+4. Submit pull request
+
+## 📄 **License**
+
+This project is licensed under the MIT License.
+
+## 🆘 **Support**
+
+For issues and questions:
+- Check logs for error details
+- Verify configuration settings
+- Ensure all dependencies are installed
+- Check port availability
+
+---
+
+**Built with Model Context Protocol (MCP) - The future of LLM-tool integration**
 ├── openapi_specs/        # OpenAPI specifications
 │   ├── cash_api.yaml
 │   ├── securities_api.yaml

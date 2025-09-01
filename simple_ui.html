@@ -70,6 +70,46 @@
                 const cfgPass = document.getElementById('cfgPass');
                 const cfgBase = document.getElementById('cfgBase');
 
+                // WebSocket connection
+                let ws = null;
+                let wsReconnectAttempts = 0;
+                const maxReconnectAttempts = 5;
+
+                function connectWebSocket() {
+                    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${window.location.host}/ws`;
+                    
+                    ws = new WebSocket(wsUrl);
+                    
+                    ws.onopen = function() {
+                        console.log('WebSocket connected');
+                        wsReconnectAttempts = 0;
+                        statusEl.textContent = 'Connected';
+                    };
+                    
+                    ws.onclose = function() {
+                        console.log('WebSocket disconnected');
+                        statusEl.textContent = 'Disconnected';
+                        
+                        // Attempt to reconnect
+                        if (wsReconnectAttempts < maxReconnectAttempts) {
+                            wsReconnectAttempts++;
+                            console.log(`Attempting to reconnect... (${wsReconnectAttempts}/${maxReconnectAttempts})`);
+                            setTimeout(connectWebSocket, 2000 * wsReconnectAttempts);
+                        } else {
+                            add('system', 'WebSocket connection lost. Please refresh the page.');
+                        }
+                    };
+                    
+                    ws.onerror = function(error) {
+                        console.error('WebSocket error:', error);
+                        statusEl.textContent = 'Connection Error';
+                    };
+                }
+
+                // Connect on page load
+                connectWebSocket();
+
                 
                 // Surface JS errors in the UI so users see why nothing appears
                 function logErrorToUI(text){
@@ -154,7 +194,7 @@
                     logEl.scrollTop = logEl.scrollHeight;
                 }
 
-                add('system', 'Assistant ready. Please click "Login & Configure" to set up your credentials.');
+                add('system', 'Connecting to chat server... Please click "Login & Configure" to set up your credentials.');
 
                 cfgBtn.addEventListener('click', ()=> cfgDlg.showModal());
                 const loginStatusEl = document.getElementById('loginStatus');
@@ -214,14 +254,40 @@
                 });
 
                 async function callAssistant(message){
-                    const body = {
-                        message,
-                        auto_execute: true,
-                        max_tools: 3
-                    };
-                    const resp = await fetch('/assistant/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-                    if(!resp.ok) throw new Error('HTTP '+resp.status);
-                        return resp.json();
+                    return new Promise((resolve, reject) => {
+                        if (!ws || ws.readyState !== WebSocket.OPEN) {
+                            reject(new Error('WebSocket not connected'));
+                            return;
+                        }
+                        
+                        // Set up response handler
+                        const messageHandler = (event) => {
+                            try {
+                                const data = JSON.parse(event.data);
+                                if (data.type === 'bot_response') {
+                                    ws.removeEventListener('message', messageHandler);
+                                    resolve(data.content);
+                                } else if (data.type === 'error') {
+                                    ws.removeEventListener('message', messageHandler);
+                                    reject(new Error(data.content));
+                                }
+                            } catch (err) {
+                                ws.removeEventListener('message', messageHandler);
+                                reject(err);
+                            }
+                        };
+                        
+                        ws.addEventListener('message', messageHandler);
+                        
+                        // Send message
+                        ws.send(message);
+                        
+                        // Timeout after 30 seconds
+                        setTimeout(() => {
+                            ws.removeEventListener('message', messageHandler);
+                            reject(new Error('Request timeout'));
+                        }, 30000);
+                    });
                 }
 
 
@@ -230,6 +296,12 @@
                     e.preventDefault();
                     const text = input.value.trim();
                     if(!text) return;
+                    
+                    if (!ws || ws.readyState !== WebSocket.OPEN) {
+                        add('system', 'WebSocket not connected. Please wait for connection or refresh the page.');
+                        return;
+                    }
+                    
                     input.value='';
                     add('user', text);
                     statusEl.textContent = 'Thinking…';
@@ -241,7 +313,7 @@
                         add('assistant', 'Error: '+ err.message);
                     } finally {
                         sendBtn.disabled = false;
-                        statusEl.textContent = 'Idle';
+                        statusEl.textContent = ws && ws.readyState === WebSocket.OPEN ? 'Connected' : 'Disconnected';
                         input.focus();
                     }
                 });

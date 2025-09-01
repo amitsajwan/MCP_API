@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 import requests
 from dataclasses import dataclass
+from datetime import datetime
 
 # MCP Protocol imports
 from mcp.server import Server
@@ -33,6 +34,14 @@ from mcp.types import (
     EmbeddedResource,
     LoggingLevel
 )
+
+# HTTP server imports
+try:
+    from aiohttp import web, web_request, web_response
+    from aiohttp.web import Application, RouteTableDef
+    HTTP_AVAILABLE = True
+except ImportError:
+    HTTP_AVAILABLE = False
 
 # Import config or create default
 try:
@@ -627,9 +636,10 @@ class MCPServer:
     
     async def run(self):
         """Run the MCP server using stdio transport."""
-        logger.info("Starting MCP server with stdio transport")
-        logger.info(f"Loaded {len(self.api_specs)} API specifications")
-        logger.info(f"Registered {len(self.api_tools)} MCP tools")
+        logger.info("🚀 Starting MCP server with stdio transport")
+        logger.info(f"📋 Loaded {len(self.api_specs)} API specifications")
+        logger.info(f"🔧 Registered {len(self.api_tools)} MCP tools")
+        logger.info("✅ MCP Server is ready for client connections")
         
         try:
             async with stdio_server() as (read_stream, write_stream):
@@ -649,11 +659,232 @@ class MCPServer:
             logger.error(f"Error in server run loop: {e}")
             raise
 
+    async def run_http(self, host: str = "localhost", port: int = 8080):
+        """Run HTTP server for health checks and documentation."""
+        if not HTTP_AVAILABLE:
+            logger.error("aiohttp is not available. Please install with: pip install aiohttp")
+            return
+            
+        app = web.Application()
+        
+        # Health check endpoint
+        async def health(request):
+            return web.json_response({
+                "status": "healthy",
+                "server": "openapi-mcp-server",
+                "version": "1.0.0",
+                "timestamp": datetime.now().isoformat(),
+                "api_specs": len(self.api_specs),
+                "tools": len(self.api_tools),
+                "specs_loaded": list(self.api_specs.keys())
+            })
+        
+        # Documentation endpoint
+        async def docs(request):
+            tools_info = []
+            for tool_name, tool in self.api_tools.items():
+                tools_info.append({
+                    "name": tool_name,
+                    "description": tool.description,
+                    "method": tool.method,
+                    "path": tool.path,
+                    "spec": tool.spec_name,
+                    "tags": tool.tags,
+                    "parameters": list(tool.parameters.keys())
+                })
+            
+            return web.json_response({
+                "server": "OpenAPI MCP Server",
+                "version": "1.0.0",
+                "description": "MCP Server exposing OpenAPI specifications as tools",
+                "api_specifications": {
+                    spec_name: {
+                        "base_url": spec.base_url,
+                        "file_path": spec.file_path,
+                        "info": spec.spec.get("info", {})
+                    } for spec_name, spec in self.api_specs.items()
+                },
+                "tools": tools_info,
+                "usage": {
+                    "mcp_client": "Connect using MCP protocol via stdio transport",
+                    "authentication": "Use set_credentials tool to authenticate",
+                    "health_check": f"http://{host}:{port}/health"
+                }
+            })
+        
+        # API endpoints for HTTP MCP integration
+        async def api_tools(request):
+            """API endpoint to list tools for HTTP clients."""
+            tools_info = []
+            for tool_name, tool in self.api_tools.items():
+                tools_info.append({
+                    "name": tool_name,
+                    "description": tool.description,
+                    "method": tool.method,
+                    "path": tool.path,
+                    "spec": tool.spec_name,
+                    "tags": tool.tags,
+                    "parameters": list(tool.parameters.keys())
+                })
+            return web.json_response({"tools": tools_info})
+        
+        async def api_credentials(request):
+            """API endpoint to set credentials via HTTP."""
+            try:
+                data = await request.json()
+                username = data.get("username")
+                password = data.get("password")
+                
+                if not username or not password:
+                    return web.json_response(
+                        {"status": "error", "message": "Username and password required"}, 
+                        status=400
+                    )
+                
+                # Set credentials on the server
+                self.set_credentials(
+                    username=username,
+                    password=password,
+                    api_key_name=data.get("api_key_name"),
+                    api_key_value=data.get("api_key_value"),
+                    login_url=data.get("login_url")
+                )
+                
+                return web.json_response({
+                    "status": "success", 
+                    "message": "Credentials set successfully"
+                })
+                
+            except Exception as e:
+                return web.json_response(
+                    {"status": "error", "message": str(e)}, 
+                    status=500
+                )
+        
+        async def api_login(request):
+            """API endpoint to perform login via HTTP."""
+            try:
+                success = self._perform_login()
+                if success:
+                    return web.json_response({
+                        "status": "success", 
+                        "message": "Login successful"
+                    })
+                else:
+                    return web.json_response(
+                        {"status": "error", "message": "Login failed"}, 
+                        status=401
+                    )
+            except Exception as e:
+                return web.json_response(
+                    {"status": "error", "message": str(e)}, 
+                    status=500
+                )
+            
+        # Swagger UI-like endpoint
+        async def swagger_ui(request):
+            html = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>OpenAPI MCP Server</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
+                    .container { max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                    h1 { color: #333; border-bottom: 3px solid #007acc; padding-bottom: 10px; }
+                    h2 { color: #555; margin-top: 30px; }
+                    .status { background: #d4edda; border: 1px solid #c3e6cb; color: #155724; padding: 15px; border-radius: 4px; margin: 20px 0; }
+                    .spec { background: #f8f9fa; border-left: 4px solid #007acc; padding: 15px; margin: 15px 0; }
+                    .tool { background: #fff3cd; border: 1px solid #ffeaa7; padding: 10px; margin: 10px 0; border-radius: 4px; }
+                    .method { display: inline-block; padding: 2px 8px; border-radius: 3px; color: white; font-weight: bold; }
+                    .get { background: #61affe; }
+                    .post { background: #49cc90; }
+                    .put { background: #fca130; }
+                    .delete { background: #f93e3e; }
+                    .patch { background: #50e3c2; }
+                    code { background: #f1f1f1; padding: 2px 4px; border-radius: 3px; }
+                    .endpoint { margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 4px; }
+                    ul { margin: 10px 0; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>🚀 OpenAPI MCP Server</h1>
+                    <div class="status">
+                        ✅ Server is running and healthy<br>
+                        📊 API Specifications: """ + str(len(self.api_specs)) + """<br>
+                        🔧 Tools Available: """ + str(len(self.api_tools)) + """
+                    </div>
+                    
+                    <h2>📋 Loaded API Specifications</h2>
+            """
+            
+            for spec_name, spec in self.api_specs.items():
+                info = spec.spec.get("info", {})
+                html += f"""
+                    <div class="spec">
+                        <h3>{spec_name}</h3>
+                        <p><strong>Base URL:</strong> <code>{spec.base_url}</code></p>
+                        <p><strong>Title:</strong> {info.get('title', 'N/A')}</p>
+                        <p><strong>Version:</strong> {info.get('version', 'N/A')}</p>
+                        <p><strong>Description:</strong> {info.get('description', 'N/A')}</p>
+                    </div>
+                """
+            
+            html += "<h2>🔧 Available Tools</h2>"
+            
+            for tool_name, tool in self.api_tools.items():
+                method_class = tool.method.lower()
+                html += f"""
+                    <div class="tool">
+                        <h4>{tool_name}</h4>
+                        <div class="endpoint">
+                            <span class="method {method_class}">{tool.method}</span>
+                            <code>{tool.path}</code>
+                        </div>
+                        <p>{tool.description}</p>
+                        <p><strong>Spec:</strong> {tool.spec_name}</p>
+                        <p><strong>Tags:</strong> {', '.join(tool.tags) if tool.tags else 'None'}</p>
+                        <p><strong>Parameters:</strong> {', '.join(tool.parameters.keys()) if tool.parameters else 'None'}</p>
+                    </div>
+                """
+            
+            html += """
+                    <h2>🔌 Usage</h2>
+                    <div class="endpoint">
+                        <p><strong>MCP Client Connection:</strong> Use stdio transport to connect via MCP protocol</p>
+                        <p><strong>Health Check:</strong> <code>GET /health</code></p>
+                        <p><strong>API Documentation:</strong> <code>GET /docs</code></p>
+                        <p><strong>Authentication:</strong> Use the <code>set_credentials</code> tool after connecting</p>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+            return web.Response(text=html, content_type='text/html')
+        
+        app.router.add_get('/health', health)
+        app.router.add_get('/docs', docs)
+        app.router.add_get('/', swagger_ui)
+        app.router.add_get('/swagger', swagger_ui)
+        
+        logger.info(f"🌐 Starting HTTP server on http://{host}:{port}")
+        logger.info(f"📊 Health check: http://{host}:{port}/health")
+        logger.info(f"📚 Documentation: http://{host}:{port}/docs")
+        logger.info(f"🎨 Web UI: http://{host}:{port}/")
+        
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+        
+        return runner
+
 
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="OpenAPI MCP Server")
-    parser.add_argument("--transport", default="stdio", choices=["stdio", "http"])
+    parser.add_argument("--transport", default="stdio", choices=["stdio", "http", "both"])
     parser.add_argument("--host", default=getattr(config, 'MCP_HOST', 'localhost'))
     parser.add_argument("--port", type=int, default=getattr(config, 'MCP_PORT', 8080))
     parser.add_argument("--username", help="Username for authentication")
@@ -696,10 +927,60 @@ def main():
                 return 1
             finally:
                 loop.close()
-        else:
-            # HTTP transport (for backward compatibility)
-            logger.warning("HTTP transport is deprecated. Use stdio for proper MCP protocol.")
-            return 1
+        elif args.transport == "http":
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                async def run_http_only():
+                    runner = await server.run_http(args.host, args.port)
+                    try:
+                        # Keep running
+                        while True:
+                            await asyncio.sleep(1)
+                    except KeyboardInterrupt:
+                        logger.info("HTTP server shutdown by user")
+                    finally:
+                        await runner.cleanup()
+                
+                loop.run_until_complete(run_http_only())
+            except KeyboardInterrupt:
+                logger.info("Server shutdown by user")
+            except Exception as e:
+                logger.error(f"Server error: {e}", exc_info=True)
+                return 1
+            finally:
+                loop.close()
+        elif args.transport == "both":
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                
+                async def run_both():
+                    # Start HTTP server
+                    http_runner = await server.run_http(args.host, args.port)
+                    
+                    # Also prepare for stdio (but don't block on it)
+                    logger.info("🔌 Server ready for MCP stdio connections")
+                    logger.info("💡 To connect via MCP: python mcp_client.py --connect stdio")
+                    
+                    try:
+                        # Keep HTTP server running
+                        while True:
+                            await asyncio.sleep(1)
+                    except KeyboardInterrupt:
+                        logger.info("Server shutdown by user")
+                    finally:
+                        await http_runner.cleanup()
+                
+                loop.run_until_complete(run_both())
+            except KeyboardInterrupt:
+                logger.info("Server shutdown by user")
+            except Exception as e:
+                logger.error(f"Server error: {e}", exc_info=True)
+                return 1
+            finally:
+                loop.close()
         
         return 0
         

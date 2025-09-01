@@ -64,22 +64,6 @@ if getattr(config, 'ENABLE_CORS', True):
 mcp_client: Optional[MCPClient] = None
 
 
-class ChatMessage(BaseModel):
-    """Chat message model."""
-    message: str
-    session_id: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    """Chat response model."""
-    status: str
-    message: str
-    reasoning: Optional[str] = None
-    plan: Optional[List[Dict[str, Any]]] = None
-    results: Optional[List[Dict[str, Any]]] = None
-    session_id: Optional[str] = None
-
-
 class WebSocketManager:
     """Manages WebSocket connections."""
     
@@ -131,10 +115,12 @@ async def startup_event():
     global mcp_client
     try:
         logger.info("Starting chatbot application...")
+        logger.info("🌐 Connecting to HTTP MCP server...")
         
-        # Initialize MCP client
-        mcp_client = MCPClient()
+        # Create HTTP MCP client
+        mcp_client = MCPClient(server_host="localhost", server_port=config.MCP_PORT)
         await mcp_client.connect()
+        logger.info("✅ Connected to HTTP MCP server")
         
         logger.info("MCP client initialized successfully")
         logger.info(f"Chatbot server starting on {config.get_chatbot_url()}")
@@ -270,33 +256,23 @@ async def websocket_endpoint(websocket: WebSocket):
         websocket_manager.disconnect(websocket)
 
 
-@app.post("/chat")
-async def chat_endpoint(message: ChatMessage):
-    """HTTP endpoint for chat functionality."""
-    if not mcp_client:
-        raise HTTPException(status_code=503, detail="MCP client not initialized")
-    
-    try:
-        response = await mcp_client.process_message(message.message)
-        return ChatResponse(
-            status="success",
-            message=response,
-            session_id=message.session_id
-        )
-    except Exception as e:
-        logger.error(f"Error in chat endpoint: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/tools")
 async def list_tools():
-    """List available MCP tools."""
+    """List available MCP tools via MCP client."""
     if not mcp_client:
         raise HTTPException(status_code=503, detail="MCP client not initialized")
     
     try:
+        # Use MCP client to list tools
         tools = await mcp_client.list_tools()
-        return {"tools": tools}
+        tools_info = []
+        for tool in tools:
+            tools_info.append({
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.inputSchema
+            })
+        return {"tools": tools_info}
     except Exception as e:
         logger.error(f"Error listing tools: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -311,16 +287,12 @@ class CredentialsRequest(BaseModel):
 
 @app.post("/credentials")
 async def set_credentials(credentials: CredentialsRequest):
-    """Set API credentials for MCP client."""
-
-
-    print(" ========== ")
+    """Set API credentials via MCP client."""
     if not mcp_client:
         raise HTTPException(status_code=503, detail="MCP client not initialized")
     
     try:
-        # Call server-side set_credentials tool
-        print(" ========== ")
+        # Use MCP client to call the set_credentials tool
         tool_response = await mcp_client.call_tool(
             "set_credentials",
             {
@@ -331,22 +303,26 @@ async def set_credentials(credentials: CredentialsRequest):
                 "login_url": getattr(config, 'DEFAULT_LOGIN_URL', None)
             }
         )
-        print(f" ========== {tool_response}")
-        if tool_response.get('status') != 'success':
+        
+        if tool_response.get('status') == 'success':
+            return {"status": "success", "message": "Credentials stored successfully"}
+        else:
             raise ValueError(f"Failed to set credentials: {tool_response.get('message')}")
-        return {"status": "success", "message": "Credentials stored successfully"}
+            
     except Exception as e:
+        logger.error(f"Error setting credentials: {e}")
         logger.error(f"Error setting credentials: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/login")
 async def login():
-    """Perform login with stored credentials."""
+    """Perform login via MCP client."""
     if not mcp_client:
         raise HTTPException(status_code=503, detail="MCP client not initialized")
     
     try:
+        # Use MCP client to call the perform_login tool
         result = await mcp_client.perform_login()
         if result.get("status") == "success":
             return {"status": "success", "message": "Login successful"}
@@ -377,5 +353,5 @@ if __name__ == "__main__":
     #     reload=False
     # )
 
-    logger.info("Starting uvicorn for chatbot_app on 0.0.0.0:8080")
-    uvicorn.run("chatbot_app:app", host="0.0.0.0", port=8080, reload=True, log_level="info")
+    logger.info(f"Starting uvicorn for chatbot_app on {config.CHATBOT_HOST}:{config.CHATBOT_PORT}")
+    uvicorn.run("chatbot_app:app", host=config.CHATBOT_HOST, port=config.CHATBOT_PORT, reload=True, log_level="info")
