@@ -25,6 +25,36 @@
                 .small { font-size:.7rem; opacity:.65; }
                 #status { font-size:.7rem; opacity:.7; margin-left:auto; }
                 a { color:#58a6ff; }
+                .status-message {
+                    padding: 8px 12px;
+                    margin: 8px 0;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    animation: fadeIn 0.3s ease-in;
+                }
+                
+                .status-message.success {
+                    background-color: #1d3d1d;
+                    color: #4ade80;
+                    border: 1px solid #2d5a2d;
+                }
+                
+                .status-message.error {
+                    background-color: #3d1d1d;
+                    color: #ff6b6b;
+                    border: 1px solid #5a2d2d;
+                }
+                
+                .status-message.info {
+                    background-color: #1d2d3d;
+                    color: #58a6ff;
+                    border: 1px solid #2d3d5a;
+                }
+                
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(-10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
             </style>
         </head>
         <body>
@@ -199,22 +229,54 @@
                 cfgBtn.addEventListener('click', ()=> cfgDlg.showModal());
                 const loginStatusEl = document.getElementById('loginStatus');
                 
-                function updateLoginStatus(isConfigured) {
+                function updateLoginStatus(isConfigured, message = '') {
                     if (isConfigured) {
-                        loginStatusEl.textContent = 'Configured ✓';
+                        loginStatusEl.textContent = 'Authenticated ✓';
                         loginStatusEl.style.color = '#4ade80';
                         cfgBtn.textContent = 'Reconfigure';
                         cfgBtn.style.background = '#2d5fff';
                         cfgBtn.style.borderColor = '#2d5fff';
                         cfgBtn.style.marginLeft = '0.5rem';
+                        
+                        // Show success message if provided
+                        if (message) {
+                            showStatusMessage(message, 'success');
+                        }
                     } else {
-                        loginStatusEl.textContent = 'Not Configured';
+                        loginStatusEl.textContent = 'Not Authenticated ✗';
                         loginStatusEl.style.color = '#ff6b6b';
                         cfgBtn.textContent = 'Login & Configure';
                         cfgBtn.style.background = '#ff6b6b';
                         cfgBtn.style.borderColor = '#ff6b6b';
                         cfgBtn.style.marginLeft = 'auto';
+                        
+                        // Show error message if provided
+                        if (message) {
+                            showStatusMessage(message, 'error');
+                        }
                     }
+                }
+                
+                function showStatusMessage(message, type = 'info') {
+                    // Remove existing status messages
+                    const existingMessages = document.querySelectorAll('.status-message');
+                    existingMessages.forEach(msg => msg.remove());
+                    
+                    // Create new status message
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = `status-message ${type}`;
+                    messageDiv.textContent = message;
+                    
+                    // Insert after login status
+                    const statusElement = document.getElementById('loginStatus');
+                    statusElement.parentNode.insertBefore(messageDiv, statusElement.nextSibling);
+                    
+                    // Auto-remove after 5 seconds
+                    setTimeout(() => {
+                        if (messageDiv.parentNode) {
+                            messageDiv.remove();
+                        }
+                    }, 5000);
                 }
 
                 cfgForm.addEventListener('submit', async (e)=>{
@@ -232,6 +294,7 @@
                         const result = await resp.json();
                         if (result.status === 'success') {
                             add('system', '✅ Credentials set successfully! Now logging in...');
+                            showStatusMessage('Credentials saved successfully. Attempting login...', 'info');
                             
                             // Login
                             const loginResp = await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}});
@@ -240,7 +303,7 @@
                             const loginResult = await loginResp.json();
                             if (loginResult.status === 'success') {
                                 add('system', '✅ Login successful! You can now use the assistant.');
-                                updateLoginStatus(true);
+                                updateLoginStatus(true, 'Successfully authenticated! You can now access your financial data.');
                                 cfgDlg.close();
                             } else {
                                 add('system', '⚠️ Login failed: ' + (loginResult.message || 'Unknown error'));
@@ -250,6 +313,7 @@
                         }
                     }catch(err){
                         add('assistant', 'Config error: '+err.message);
+                        updateLoginStatus(false, `Authentication failed: ${err.message}`);
                     }
                 });
 
@@ -267,6 +331,16 @@
                                 if (data.type === 'bot_response') {
                                     ws.removeEventListener('message', messageHandler);
                                     resolve(data.content);
+                                } else if (data.type === 'function_calling_response') {
+                                    ws.removeEventListener('message', messageHandler);
+                                    resolve(data.content);
+                                } else if (data.type === 'fallback_response') {
+                                    ws.removeEventListener('message', messageHandler);
+                                    let response = data.content;
+                                    if (data.details) {
+                                        response += '\n\nTechnical details: ' + data.details;
+                                    }
+                                    resolve(response);
                                 } else if (data.type === 'error') {
                                     ws.removeEventListener('message', messageHandler);
                                     reject(new Error(data.content));

@@ -222,9 +222,16 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             logger.info(f"Received message: {data}")
             
+            # Parse message data
+            try:
+                message_data = json.loads(data)
+                user_message = message_data.get("message", data)
+            except json.JSONDecodeError:
+                user_message = data
+            
             # Send acknowledgment
             await websocket_manager.send_personal_message(
-                json.dumps({"type": "user_message", "content": data}),
+                json.dumps({"type": "user_message", "content": user_message}),
                 websocket
             )
             
@@ -236,21 +243,42 @@ async def websocket_endpoint(websocket: WebSocket):
                 continue
             
             try:
-                # Process message with MCP
-                response = await mcp_client.process_message(data)
+                # Check if this is an authentication-related query
+                auth_keywords = ['login', 'authenticate', 'credential', 'password', 'username', 'connect', 'setup']
+                is_auth_query = any(keyword in user_message.lower() for keyword in auth_keywords)
+                
+                # Use enhanced Anthropic-style function calling
+                response = await mcp_client.chat_with_function_calling(user_message)
+                
+                # Determine response type based on content
+                response_type = "function_calling_response"
+                if is_auth_query and ("successfully" in response.lower() or "authenticated" in response.lower()):
+                    response_type = "authentication_success"
+                elif "error" in response.lower() or "failed" in response.lower():
+                    response_type = "error_response"
                 
                 # Send response back to client
                 await websocket_manager.send_personal_message(
-                    json.dumps({"type": "bot_response", "content": response}),
+                    json.dumps({"type": response_type, "content": response}),
                     websocket
                 )
                 
             except Exception as e:
-                logger.error(f"Error processing message: {e}")
-                await websocket_manager.send_personal_message(
-                    json.dumps({"type": "error", "content": str(e)}),
-                    websocket
-                )
+                logger.error(f"Error processing message with function calling: {e}")
+                
+                # Fallback to regular processing if function calling fails
+                try:
+                    fallback_response = await mcp_client.process_message(user_message)
+                    await websocket_manager.send_personal_message(
+                        json.dumps({"type": "fallback_response", "content": fallback_response, "details": f"Function calling unavailable: {str(e)}"}),
+                        websocket
+                    )
+                except Exception as fallback_error:
+                    logger.error(f"Fallback processing also failed: {fallback_error}")
+                    await websocket_manager.send_personal_message(
+                        json.dumps({"type": "error", "error": f"Processing failed: {str(fallback_error)}"}),
+                        websocket
+                    )
                 
     except WebSocketDisconnect:
         websocket_manager.disconnect(websocket)

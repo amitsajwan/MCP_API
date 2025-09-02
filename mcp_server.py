@@ -105,12 +105,12 @@ class MCPServer:
         self.api_tools: Dict[str, APITool] = {}
         self.sessions: Dict[str, requests.Session] = {}
         
-        # Authentication state
-        self.username: Optional[str] = None
-        self.password: Optional[str] = None
-        self.api_key_name: Optional[str] = None
-        self.api_key_value: Optional[str] = None
-        self.login_url: Optional[str] = None
+        # Authentication state - Load from environment if available
+        self.username: Optional[str] = os.getenv('API_USERNAME')
+        self.password: Optional[str] = os.getenv('API_PASSWORD')
+        self.api_key_name: Optional[str] = os.getenv('API_KEY_NAME')
+        self.api_key_value: Optional[str] = os.getenv('API_KEY_VALUE')
+        self.login_url: Optional[str] = os.getenv('LOGIN_URL')
         
         # Initialize
         logger.info("📂 Loading API specifications...")
@@ -118,6 +118,12 @@ class MCPServer:
         logger.info("🔧 Registering MCP tools...")
         self._register_mcp_tools()
         logger.info(f"✅ MCP Server initialized with {len(self.api_tools)} tools from {len(self.api_specs)} API specs")
+        
+        # Log credential status
+        if self.username:
+            logger.info(f"🔐 Credentials loaded from environment for user: {self.username}")
+        else:
+            logger.info("🔓 No credentials found in environment - use set_credentials tool")
     
     def _load_api_specs(self):
         """Load OpenAPI specifications from directory."""
@@ -183,7 +189,7 @@ class MCPServer:
             tools = []
             
             for tool_name, api_tool in self.api_tools.items():
-                # Convert parameters to MCP format
+                # Convert parameters to MCP format with comprehensive schema support
                 mcp_parameters = {}
                 required_params = []
                 
@@ -193,13 +199,20 @@ class MCPServer:
                         "description": param_info.get('description', ''),
                     }
                     
-                    # Handle enum values if present
-                    if 'enum' in param_info:
-                        param_schema['enum'] = param_info['enum']
+                    # Handle all schema properties
+                    schema_properties = ['enum', 'format', 'minimum', 'maximum', 'minLength', 'maxLength', 'pattern', 'example', 'default']
+                    for prop in schema_properties:
+                        if prop in param_info:
+                            param_schema[prop] = param_info[prop]
                     
-                    # Handle format if present
-                    if 'format' in param_info:
-                        param_schema['format'] = param_info['format']
+                    # Handle object properties for request body
+                    if param_name == 'body' and param_info.get('type') == 'object':
+                        if 'properties' in param_info:
+                            param_schema['properties'] = param_info['properties']
+                        if 'schema_required' in param_info:
+                            param_schema['required'] = param_info['schema_required']
+                        if '$ref' in param_info:
+                            param_schema['$ref'] = param_info['$ref']
                     
                     mcp_parameters[param_name] = param_schema
                     
@@ -221,43 +234,50 @@ class MCPServer:
             # Add set_credentials tool for authentication
             tools.append(Tool(
                 name="set_credentials",
-                description="Set authentication credentials for API access",
+                description="Set authentication credentials for API access. If not provided, values will be loaded from environment variables (API_USERNAME, API_PASSWORD, API_KEY_NAME, API_KEY_VALUE, LOGIN_URL).",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "username": {
                             "type": "string",
-                            "description": "Username for authentication"
+                            "description": "Username for authentication (fallback: API_USERNAME env var)"
                         },
                         "password": {
                             "type": "string",
-                            "description": "Password for authentication"
+                            "description": "Password for authentication (fallback: API_PASSWORD env var)"
                         },
                         "api_key_name": {
                             "type": "string",
-                            "description": "API key header name (optional)"
+                            "description": "API key header name (fallback: API_KEY_NAME env var)"
                         },
                         "api_key_value": {
                             "type": "string",
-                            "description": "API key value (optional)"
+                            "description": "API key value (fallback: API_KEY_VALUE env var)"
                         },
                         "login_url": {
                             "type": "string",
-                            "description": "Login URL (optional)"
+                            "description": "Login URL (fallback: LOGIN_URL env var or config.DEFAULT_LOGIN_URL)"
                         }
                     },
-                    "required": ["username", "password"],
+                    "required": [],
                     "additionalProperties": False
                 }
             ))
             
-            # Add perform_login tool
+            # Add perform_login tool for authentication
             tools.append(Tool(
                 name="perform_login",
-                description="Perform authentication login using stored credentials.",
+                description="Perform login using stored credentials to obtain session token. Credentials must be set first using set_credentials or environment variables.",
                 inputSchema={
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "force_login": {
+                            "type": "boolean",
+                            "description": "Force login even if already authenticated (default: false)",
+                            "default": False
+                        }
+                    },
+                    "required": [],
                     "additionalProperties": False
                 }
             ))
@@ -266,46 +286,89 @@ class MCPServer:
             return tools
         
         @self.server.call_tool()
-        async def call_tool(name: str, arguments: dict) -> List[TextContent]:
+        async def mcp_call_tool(name: str, arguments: dict) -> List[TextContent]:
             """Call an MCP tool by name."""
             logger.info(f"🔧 Executing tool: {name} with arguments: {list(arguments.keys())}")
             
             if name == "set_credentials":
                 try:
-                    username = arguments.get("username")
-                    password = arguments.get("password")
-                    api_key_name = arguments.get("api_key_name")
-                    api_key_value = arguments.get("api_key_value")
-                    login_url = arguments.get("login_url")
+                    # Use provided values or fallback to environment variables or existing values
+                    username = arguments.get("username") or self.username or os.getenv('API_USERNAME')
+                    password = arguments.get("password") or self.password or os.getenv('API_PASSWORD')
+                    api_key_name = arguments.get("api_key_name") or self.api_key_name or os.getenv('API_KEY_NAME')
+                    api_key_value = arguments.get("api_key_value") or self.api_key_value or os.getenv('API_KEY_VALUE')
+                    login_url = arguments.get("login_url") or self.login_url or os.getenv('LOGIN_URL') or config.DEFAULT_LOGIN_URL
                     
-                    self.set_credentials(username, password, api_key_name, api_key_value, login_url)
+                    # Validate required credentials
+                    if not username or not password:
+                        error_msg = "Username and password are required. Provide them as arguments or set API_USERNAME and API_PASSWORD environment variables."
+                        logger.error(f"❌ {error_msg}")
+                        return [TextContent(type="text", text=json.dumps({"status": "error", "message": error_msg}, indent=2))]
+                    
+                    # Store credentials locally without making external API calls
+                    self.username = username
+                    self.password = password
+                    self.api_key_name = api_key_name
+                    self.api_key_value = api_key_value
+                    self.login_url = login_url
                     
                     response = {
                         "status": "success",
-                        "message": "Credentials set successfully",
+                        "message": "Credentials stored successfully in MCP server",
                         "username": username,
-                        "login_url": login_url or config.DEFAULT_LOGIN_URL
+                        "login_url": login_url,
+                        "has_api_key": bool(api_key_name and api_key_value),
+                        "api_key_name": api_key_name if api_key_name else None
                     }
                     
-                    logger.info(f"✅ Credentials set successfully for user: {username}")
+                    logger.info(f"✅ Credentials stored successfully for user: {username}")
                     return [TextContent(type="text", text=json.dumps(response, indent=2))]
                     
                 except Exception as e:
                     logger.error(f"❌ Error setting credentials: {e}")
-                    return [TextContent(type="text", text=f"Error setting credentials: {str(e)}")]
+                    return [TextContent(type="text", text=json.dumps({"status": "error", "message": str(e)}, indent=2))]
             elif name == "perform_login":
                 try:
-                    success = self._perform_login()
-                    if success:
-                        logger.info("✅ Login performed successfully")
-                        response = {"status": "success", "message": "Login performed successfully"}
+                    force_login = arguments.get("force_login", False)
+                    
+                    # Check if already authenticated and not forcing login
+                    if not force_login and self.session_id:
+                        response = {
+                            "status": "success",
+                            "message": "Already authenticated",
+                            "session_id": self.session_id,
+                            "username": self.username,
+                            "login_url": self.login_url
+                        }
+                        logger.info("✅ Already authenticated")
+                        return [TextContent(type="text", text=json.dumps(response, indent=2))]
+                    
+                    # Check if credentials are available
+                    if not self.username or not self.password:
+                        error_msg = "No credentials available. Please call set_credentials first or set environment variables."
+                        logger.error(f"❌ {error_msg}")
+                        return [TextContent(type="text", text=json.dumps({"status": "error", "message": error_msg}, indent=2))]
+                    
+                    result = self._perform_login()
+                    if result:
+                        response = {
+                            "status": "success",
+                            "message": "Login successful",
+                            "session_id": self.session_id,
+                            "username": self.username,
+                            "login_url": self.login_url,
+                            "has_api_key": bool(self.api_key_name and self.api_key_value)
+                        }
+                        logger.info("✅ Login successful")
+                        return [TextContent(type="text", text=json.dumps(response, indent=2))]
                     else:
-                        logger.warning("⚠️ Login failed")
-                        response = {"status": "error", "message": "Login failed"}
-                    return [TextContent(type="text", text=json.dumps(response, indent=2))]
+                        error_msg = "Login failed - check credentials and login URL"
+                        logger.error(f"❌ {error_msg}")
+                        return [TextContent(type="text", text=json.dumps({"status": "error", "message": error_msg}, indent=2))]
+                        
                 except Exception as e:
-                    logger.error(f"Error performing login: {e}")
-                    return [TextContent(type="text", text=f"Error performing login: {str(e)}")]
+                    logger.error(f"❌ Error during login: {e}")
+                    return [TextContent(type="text", text=json.dumps({"status": "error", "message": str(e)}, indent=2))]
             
             if name not in self.api_tools:
                 logger.warning(f"Tool not found: {name}")
@@ -332,6 +395,9 @@ class MCPServer:
             except Exception as e:
                 logger.error(f"Error executing tool {name}: {e}", exc_info=True)
                 return [TextContent(type="text", text=f"Error: {str(e)}")]
+        
+        # Store reference to the MCP call_tool function for HTTP endpoint
+        self.mcp_call_tool = mcp_call_tool
     
     def _register_spec_tools(self, spec_name: str, api_spec: APISpec):
         """Register tools for a specific API specification."""
@@ -347,29 +413,42 @@ class MCPServer:
         logger.info(f"📋 Registered {tool_count} tools from {spec_name} API spec")
     
     def _register_mcp_tool(self, spec_name: str, method: str, path: str, operation: Dict[str, Any], base_url: str):
-        """Register a single API endpoint as an MCP tool."""
+        """Register a single API endpoint as an MCP tool with comprehensive details."""
         operation_id = operation.get('operationId', f"{method}_{path.replace('/', '_').strip('_')}")
         tool_name = f"{spec_name}_{operation_id}"
         
         # Clean up tool name to ensure it's valid
         tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
         
-        # Build description
+        # Build comprehensive description
         summary = operation.get('summary', '')
         description = operation.get('description', '')
         tags = operation.get('tags', [])
         
-        tool_description = f"{summary}".strip()
+        tool_description = f"{method.upper()} {path}"
+        if summary:
+            tool_description += f"\n\nSummary: {summary}"
         if description:
-            tool_description += f"\n{description}".strip()
+            tool_description += f"\n\nDescription: {description}"
         if tags:
-            tool_description += f"\nTags: {', '.join(tags)}"
+            tool_description += f"\n\nTags: {', '.join(tags)}"
         
-        # Ensure description is not empty
-        if not tool_description:
-            tool_description = f"{method.upper()} {path}"
+        # Add response information
+        responses = operation.get('responses', {})
+        if responses:
+            tool_description += "\n\nResponses:"
+            for status_code, response_info in responses.items():
+                response_desc = response_info.get('description', '')
+                tool_description += f"\n- {status_code}: {response_desc}"
+                
+                # Add response schema info if available
+                content = response_info.get('content', {})
+                if 'application/json' in content:
+                    schema = content['application/json'].get('schema', {})
+                    if 'properties' in schema:
+                        tool_description += f" (Returns: {', '.join(schema['properties'].keys())})"
         
-        # Build parameters
+        # Build parameters with enhanced schema information
         parameters = self._extract_parameters(operation)
         
         # Create tool
@@ -386,12 +465,12 @@ class MCPServer:
         )
         
         self.api_tools[tool_name] = api_tool
-        logger.debug(f"🔧 Registered tool: {tool_name} ({method.upper()} {path})")
+        logger.debug(f"🔧 Registered tool: {tool_name} ({method.upper()} {path}) with {len(parameters)} parameters")
         
         logger.debug(f"Registered MCP tool: {tool_name}")
     
     def _extract_parameters(self, operation: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract parameters from OpenAPI operation."""
+        """Extract parameters from OpenAPI operation with comprehensive schema support."""
         parameters = {}
         
         # Path parameters
@@ -399,54 +478,105 @@ class MCPServer:
             if param.get('in') == 'path':
                 param_name = param['name']
                 param_schema = param.get('schema', {})
-                parameters[param_name] = {
+                param_def = {
                     'type': param_schema.get('type', 'string'),
                     'description': param.get('description', ''),
                     'required': param.get('required', True)
                 }
                 
-                # Add enum if present
-                if 'enum' in param_schema:
-                    parameters[param_name]['enum'] = param_schema['enum']
+                # Add additional schema properties
+                self._add_schema_properties(param_def, param_schema)
+                parameters[param_name] = param_def
         
         # Query parameters
         for param in operation.get('parameters', []):
             if param.get('in') == 'query':
                 param_name = param['name']
                 param_schema = param.get('schema', {})
-                parameters[param_name] = {
+                param_def = {
                     'type': param_schema.get('type', 'string'),
                     'description': param.get('description', ''),
                     'required': param.get('required', False)
                 }
                 
-                # Add enum if present
-                if 'enum' in param_schema:
-                    parameters[param_name]['enum'] = param_schema['enum']
+                # Add additional schema properties
+                self._add_schema_properties(param_def, param_schema)
+                parameters[param_name] = param_def
         
         # Header parameters
         for param in operation.get('parameters', []):
             if param.get('in') == 'header':
                 param_name = param['name']
                 param_schema = param.get('schema', {})
-                parameters[f"header_{param_name}"] = {
+                param_def = {
                     'type': param_schema.get('type', 'string'),
                     'description': f"Header: {param.get('description', '')}",
                     'required': param.get('required', False)
                 }
+                
+                # Add additional schema properties
+                self._add_schema_properties(param_def, param_schema)
+                parameters[f"header_{param_name}"] = param_def
         
-        # Request body
+        # Request body with detailed schema
         request_body = operation.get('requestBody')
         if request_body:
             content = request_body.get('content', {})
             if 'application/json' in content:
-                parameters['body'] = {
+                json_content = content['application/json']
+                schema = json_content.get('schema', {})
+                
+                body_param = {
                     'type': 'object',
                     'description': request_body.get('description', 'Request body data'),
                     'required': request_body.get('required', False)
                 }
+                
+                # Add detailed schema information
+                if 'properties' in schema:
+                    body_param['properties'] = schema['properties']
+                if 'required' in schema:
+                    body_param['schema_required'] = schema['required']
+                if '$ref' in schema:
+                    body_param['$ref'] = schema['$ref']
+                
+                parameters['body'] = body_param
         
         return parameters
+    
+    def _add_schema_properties(self, param_def: Dict[str, Any], schema: Dict[str, Any]):
+        """Add additional schema properties to parameter definition."""
+        # Add enum if present
+        if 'enum' in schema:
+            param_def['enum'] = schema['enum']
+        
+        # Add format if present
+        if 'format' in schema:
+            param_def['format'] = schema['format']
+        
+        # Add min/max values
+        if 'minimum' in schema:
+            param_def['minimum'] = schema['minimum']
+        if 'maximum' in schema:
+            param_def['maximum'] = schema['maximum']
+        
+        # Add string length constraints
+        if 'minLength' in schema:
+            param_def['minLength'] = schema['minLength']
+        if 'maxLength' in schema:
+            param_def['maxLength'] = schema['maxLength']
+        
+        # Add pattern if present
+        if 'pattern' in schema:
+            param_def['pattern'] = schema['pattern']
+        
+        # Add example if present
+        if 'example' in schema:
+            param_def['example'] = schema['example']
+        
+        # Add default value if present
+        if 'default' in schema:
+            param_def['default'] = schema['default']
     
     def _execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Execute an API tool."""
@@ -863,10 +993,55 @@ class MCPServer:
             """
             return web.Response(text=html, content_type='text/html')
         
+        # MCP tool calling endpoint
+        async def call_tool(request):
+            """Handle MCP tool calls via HTTP."""
+            try:
+                data = await request.json()
+                tool_name = data.get("name")
+                arguments = data.get("arguments", {})
+                
+                if not tool_name:
+                    return web.json_response(
+                        {"error": "Tool name is required"}, 
+                        status=400
+                    )
+                
+                # Call the tool using the stored MCP function reference
+                result = await self.mcp_call_tool(tool_name, arguments)
+                
+                # Extract text content from MCP result
+                if result and len(result) > 0:
+                    content = result[0]
+                    if hasattr(content, 'text'):
+                        try:
+                            # Try to parse as JSON first
+                            import json
+                            response_data = json.loads(content.text)
+                            return web.json_response(response_data)
+                        except json.JSONDecodeError:
+                            # Return as plain text if not JSON
+                            return web.json_response({"result": content.text})
+                    else:
+                        return web.json_response({"result": str(content)})
+                else:
+                    return web.json_response({"result": "No result returned"})
+                    
+            except Exception as e:
+                logger.error(f"Error in call_tool endpoint: {e}", exc_info=True)
+                return web.json_response(
+                    {"error": str(e)}, 
+                    status=500
+                )
+        
         app.router.add_get('/health', health)
         app.router.add_get('/docs', docs)
         app.router.add_get('/', swagger_ui)
         app.router.add_get('/swagger', swagger_ui)
+        app.router.add_post('/call_tool', call_tool)
+        app.router.add_get('/tools', api_tools)
+        app.router.add_post('/credentials', api_credentials)
+        app.router.add_post('/login', api_login)
         
         logger.info(f"🌐 Starting HTTP server on http://{host}:{port}")
         logger.info(f"📊 Health check: http://{host}:{port}/health")

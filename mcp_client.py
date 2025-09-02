@@ -160,7 +160,7 @@ class MCPClient:
             logger.info(f"Calling tool: {tool_name} with arguments: {arguments}")
             
             async with aiohttp.ClientSession() as session:
-                payload = {"tool_name": tool_name, "arguments": arguments}
+                payload = {"name": tool_name, "arguments": arguments}
                 async with session.post(f"{self.server_url}/call_tool", json=payload) as resp:
                     if resp.status == 200:
                         result = await resp.json()
@@ -203,7 +203,7 @@ class MCPClient:
     
     async def chat_with_function_calling(self, user_message: str) -> str:
         """
-        Chat with automatic function calling - like Anthropic Claude.
+        Enhanced Anthropic-style function calling with intelligent tool selection.
         
         This method:
         1. Lets the LLM analyze the user query
@@ -214,6 +214,20 @@ class MCPClient:
         if not self.available_tools:
             await self.list_tools()
         
+        # Check authentication status if needed
+        auth_keywords = ['login', 'authenticate', 'credential', 'balance', 'account', 'portfolio']
+        needs_auth = any(keyword in user_message.lower() for keyword in auth_keywords)
+        
+        if needs_auth:
+            is_authenticated, auth_message = await self._check_authentication_status()
+            if not is_authenticated:
+                # Try to handle authentication flow
+                auth_result = await self._handle_authentication_flow(user_message)
+                if auth_result:
+                    return auth_result
+                else:
+                    return f"Authentication required: {auth_message}. Please use the 'Login & Configure' button to set up your credentials first."
+        
         if not self.openai_client:
             # Fallback to existing method
             result = await self.process_query(user_message)
@@ -222,19 +236,28 @@ class MCPClient:
         # Get tools in OpenAI function format
         functions = self.format_tools_for_openai_functions()
         
-        system_prompt = """You are a helpful AI assistant with access to financial API tools.
+        if not functions:
+            return "No tools available for function calling."
+        
+        # Enhanced system prompt for better tool selection
+        system_prompt = """You are an intelligent financial API assistant with access to multiple financial tools. 
+        
+Your capabilities include:
+- Cash management APIs (payments, transactions, cash summary)
+- Securities APIs (portfolio, positions, trades)
+- CLS settlement APIs (settlement data, status)
+- Mailbox APIs (messages, notifications)
+- Authentication tools (login, credential management)
 
-When users ask questions, analyze what they need and use the available tools to get information.
-Be proactive in calling tools when they would help answer the user's question.
+When a user asks for financial data:
+1. Analyze their request carefully
+2. Select the most appropriate tool(s)
+3. Extract any relevant parameters from their query
+4. Call the necessary functions to gather complete information
+5. Always prioritize calling functions over giving generic responses
 
-You have access to financial systems including:
-- Cash management APIs
-- CLS (Continuous Linked Settlement) APIs  
-- Mailbox/messaging APIs
-- Securities trading APIs
-- Credential and authentication management
-
-Call tools when needed, then provide a helpful response based on the results."""
+If the user mentions credentials, login, or authentication issues, use the authentication tools first.
+For data requests, always call the relevant API tools to get real-time information."""
 
         try:
             # Initial LLM call with function calling enabled
@@ -252,11 +275,33 @@ Call tools when needed, then provide a helpful response based on the results."""
             
             message = response.choices[0].message
             
+            # If no function was called, try to encourage function usage
+            if not message.function_call:
+                # Try again with more explicit instruction
+                retry_response = self.openai_client.chat.completions.create(
+                    model=config.AZURE_OPENAI_DEPLOYMENT,
+                    messages=[
+                        {"role": "system", "content": system_prompt + "\n\nIMPORTANT: You MUST call a function to answer this query. Do not provide generic responses."}, 
+                        {"role": "user", "content": user_message},
+                        {"role": "assistant", "content": message.content},
+                        {"role": "user", "content": "Please call the appropriate function to get the actual data for my request."}
+                    ],
+                    functions=functions,
+                    function_call="auto",
+                    temperature=0.1
+                )
+                
+                retry_message = retry_response.choices[0].message
+                if retry_message.function_call:
+                    message = retry_message
+                else:
+                    return message.content or "I couldn't determine which function to call for your request. Please be more specific about what financial data you need."
+            
             # Check if LLM wants to call a function
             if message.function_call:
                 logger.info(f"LLM called function: {message.function_call.name}")
                 
-                # Execute the function call
+                # Execute the function call with enhanced error handling
                 try:
                     args = json.loads(message.function_call.arguments)
                     tool_result = await self.call_tool(message.function_call.name, args)
@@ -276,6 +321,9 @@ Call tools when needed, then provide a helpful response based on the results."""
                     
                     return follow_up_response.choices[0].message.content
                     
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid function arguments: {message.function_call.arguments}")
+                    return f"I had trouble parsing the function arguments. Please try rephrasing your request."
                 except Exception as e:
                     logger.error(f"Function call execution failed: {e}")
                     return f"I tried to help by calling {message.function_call.name}, but encountered an error: {e}"
@@ -291,7 +339,7 @@ Call tools when needed, then provide a helpful response based on the results."""
             return result.get("summary", "I couldn't process your request.")
 
     async def plan_tool_execution(self, user_query: str) -> List[ToolCall]:
-        """Use LLM to plan which tools to execute for a user query with detailed reasoning."""
+        """Enhanced tool execution planning with intelligent analysis."""
         if not self.available_tools:
             await self.list_tools()
         
@@ -300,171 +348,302 @@ Call tools when needed, then provide a helpful response based on the results."""
             logger.warning("No tools available for planning")
             return []
         
-        # If no Azure OpenAI client, use simple fallback planning
-        if not self.openai_client:
-            return self._fallback_planning(user_query)
+        # Check if this is an authentication-related query
+        auth_keywords = ["login", "credential", "authenticate", "password", "username", "auth"]
+        if any(keyword in user_query.lower() for keyword in auth_keywords):
+            return await self._plan_authentication_tools(user_query)
         
-        # Build tools description for LLM
-        tools_description = self._build_tools_description()
+        # If no Azure OpenAI client, use enhanced fallback planning
+        if not self.openai_client:
+            return self._enhanced_fallback_planning(user_query)
+        
+        # Build enhanced tools description for LLM
+        tools_description = self._build_enhanced_tools_description()
         
         # Create enhanced system prompt for better reasoning
-        system_prompt = f"""You are an AI assistant that helps users interact with financial APIs through MCP tools.
+        system_prompt = f"""You are an expert financial API assistant that plans tool execution.
 
-Available tools:
+Available Financial Tools:
 {tools_description}
 
-Your task is to:
-1. Analyze the user's query carefully
-2. Determine which tools need to be called and why
-3. Plan the execution order logically
-4. Provide detailed reasoning for each tool call
-5. Ensure the plan addresses the user's request completely
+User Query: "{user_query}"
 
-Return a JSON array of tool calls with this structure:
+Analyze the user's request and create an execution plan. Consider:
+1. What specific financial data they're asking for
+2. Which APIs contain that data
+3. Any parameters that can be extracted from their query
+4. The logical order of tool execution
+
+Respond with a JSON array of tool calls:
 [
   {{
-    "tool_name": "tool_name_here",
+    "tool_name": "exact_tool_name_from_list_above",
     "arguments": {{"param1": "value1", "param2": "value2"}},
-    "reason": "Detailed explanation of why this tool is needed and what information it will provide"
+    "reason": "detailed explanation of why this tool is needed"
   }}
 ]
 
-Guidelines for reasoning:
-- Be specific about what information each tool will retrieve
-- Explain how the tool results will help answer the user's question
-- Consider dependencies between tools (e.g., get account info before checking payments)
-- Keep the plan focused and efficient
-- Maximum {getattr(config, 'MAX_TOOL_EXECUTIONS', 5)} tool calls allowed
-
-Example reasoning:
-- "I need to get account information first to understand which accounts are available"
-- "Then I'll check pending payments for these accounts to show what's due"
-- "Finally, I'll get payment history to provide context about recent activity"
-
-Make your reasoning clear and helpful for the user to understand your thought process."""
+Guidelines:
+- Extract specific parameters from the user query when possible
+- Use exact tool names from the available tools list
+- Provide detailed reasoning for each tool selection
+- If multiple tools could provide similar data, choose the most specific one
+- If no tools match the request, return an empty array []
+- For general requests, select the most comprehensive tool available
+- Maximum {getattr(config, 'MAX_TOOL_EXECUTIONS', 5)} tool calls allowed"""
 
         try:
             response = self.openai_client.chat.completions.create(
                 model=config.AZURE_OPENAI_DEPLOYMENT,
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_query}
+                    {"role": "system", "content": "You are an expert at planning financial API tool execution. Always respond with valid JSON that matches the requested format exactly."},
+                    {"role": "user", "content": system_prompt}
                 ],
                 temperature=0.1,
                 max_tokens=1500
             )
             
             content = response.choices[0].message.content
-            logger.info(f"LLM planning response: {content}")
+            logger.info(f"Enhanced LLM planning response: {content[:200]}...")
             
-            # Parse JSON response
+            # Parse and validate the JSON response
             try:
+                # Clean up the response if it has markdown formatting
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].strip()
+                
                 tool_calls_data = json.loads(content)
                 tool_calls = []
                 
                 for call_data in tool_calls_data:
-                    tool_call = ToolCall(
-                        tool_name=call_data["tool_name"],
-                        arguments=call_data.get("arguments", {}),
-                        reason=call_data.get("reason", "No reason provided")
-                    )
-                    tool_calls.append(tool_call)
+                    if isinstance(call_data, dict) and "tool_name" in call_data:
+                        # Validate tool exists
+                        tool_name = call_data["tool_name"]
+                        if any(tool.name == tool_name for tool in self.available_tools):
+                            tool_call = ToolCall(
+                                tool_name=tool_name,
+                                arguments=call_data.get("arguments", {}),
+                                reason=call_data.get("reason", "LLM-planned execution")
+                            )
+                            tool_calls.append(tool_call)
+                        else:
+                            logger.warning(f"LLM suggested non-existent tool: {tool_name}")
                 
-                return tool_calls[:getattr(config, 'MAX_TOOL_EXECUTIONS', 5)]  # Limit to max executions
+                if tool_calls:
+                    logger.info(f"Enhanced LLM planning created {len(tool_calls)} validated tool calls")
+                    return tool_calls[:getattr(config, 'MAX_TOOL_EXECUTIONS', 5)]  # Limit to max executions
+                else:
+                    logger.info("Enhanced LLM planning returned no valid tool calls, using fallback")
+                    return self._enhanced_fallback_planning(user_query)
                 
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse LLM response as JSON: {e}")
+                logger.error(f"Failed to parse enhanced LLM response as JSON: {e}")
                 logger.error(f"LLM response was: {content}")
-                return []
+                return self._enhanced_fallback_planning(user_query)
                 
         except Exception as e:
-            logger.error(f"LLM planning failed: {e}")
-            # Fall back to simple planning
-            return self._fallback_planning(user_query)
+            logger.error(f"Enhanced LLM planning failed: {e}")
+            # Fall back to enhanced planning
+            return self._enhanced_fallback_planning(user_query)
     
-    def _fallback_planning(self, user_query: str) -> List[ToolCall]:
-        """Simple rule-based planning when LLM is not available."""
-        logger.info("Using fallback planning (no LLM available)")
+    def _enhanced_fallback_planning(self, user_query: str) -> List[ToolCall]:
+        """Enhanced fallback planning with better keyword matching and tool selection."""
+        logger.info("Using enhanced fallback planning (no LLM available)")
         
         query_lower = user_query.lower()
         tool_calls = []
         
-        # Simple keyword-based matching
-        if "pending" in query_lower and "payment" in query_lower:
+        # Enhanced keyword-based tool selection with priority
+        keywords_to_tools = {
+            # Cash API tools
+            "payment": ("cash_api_getPayments", "Getting payment information"),
+            "cash summary": ("cash_api_getCashSummary", "Getting cash summary"),
+            "transaction": ("cash_api_getTransactions", "Getting transaction data"),
+            "cash position": ("cash_api_getCashPositions", "Getting cash positions"),
+            
+            # Securities API tools  
+            "portfolio": ("securities_api_getPortfolio", "Getting portfolio information"),
+            "position": ("securities_api_getPositions", "Getting position data"),
+            "trade": ("securities_api_getTrades", "Getting trade information"),
+            "security": ("securities_api_getSecurities", "Getting security details"),
+            
+            # CLS API tools
+            "settlement": ("cls_api_getCLSSettlements", "Getting CLS settlement data"),
+            "cls": ("cls_api_getCLSSettlements", "Getting CLS information"),
+            
+            # Mailbox API tools
+            "message": ("mailbox_api_getMessages", "Getting messages"),
+            "mailbox": ("mailbox_api_getMessages", "Getting mailbox content"),
+            "notification": ("mailbox_api_getMessages", "Getting notifications")
+        }
+        
+        # Find matching tools based on keywords
+        matched_tools = set()
+        for keyword, (tool_name, reason) in keywords_to_tools.items():
+            if keyword in query_lower:
+                # Verify tool exists in available tools
+                if any(tool.name == tool_name for tool in self.available_tools):
+                    matched_tools.add((tool_name, f"{reason} based on keyword '{keyword}'"))
+        
+        # Convert to tool calls
+        for tool_name, reason in matched_tools:
             tool_calls.append(ToolCall(
-                tool_name="cash_api_getPayments",
-                arguments={"status": "pending"},
-                reason="Getting pending payments based on user request"
-            ))
-        elif "payment" in query_lower:
-            tool_calls.append(ToolCall(
-                tool_name="cash_api_getPayments",
+                tool_name=tool_name,
                 arguments={},
-                reason="Getting payments information based on user request"
-            ))
-        elif "cash" in query_lower and "summary" in query_lower:
-            tool_calls.append(ToolCall(
-                tool_name="cash_api_getCashSummary",
-                arguments={},
-                reason="Getting cash summary based on user request"
-            ))
-        elif "transaction" in query_lower:
-            tool_calls.append(ToolCall(
-                tool_name="cash_api_getTransactions",
-                arguments={},
-                reason="Getting transactions based on user request"
-            ))
-        elif "settlement" in query_lower:
-            tool_calls.append(ToolCall(
-                tool_name="cls_api_getCLSSettlements",
-                arguments={},
-                reason="Getting CLS settlements based on user request"
-            ))
-        elif "portfolio" in query_lower or "position" in query_lower:
-            tool_calls.append(ToolCall(
-                tool_name="securities_api_getPortfolio",
-                arguments={},
-                reason="Getting portfolio information based on user request"
-            ))
-        elif "message" in query_lower or "mailbox" in query_lower:
-            tool_calls.append(ToolCall(
-                tool_name="mailbox_api_getMessages",
-                arguments={},
-                reason="Getting messages based on user request"
-            ))
-        else:
-            # Default to cash summary if no specific match
-            tool_calls.append(ToolCall(
-                tool_name="cash_api_getCashSummary",
-                arguments={},
-                reason="Getting cash summary as a general overview"
+                reason=reason
             ))
         
-        logger.info(f"Fallback planning created {len(tool_calls)} tool calls")
+        # If no specific matches, provide a comprehensive overview
+        if not tool_calls:
+            # Try to find any available summary or overview tools
+            overview_tools = [
+                ("cash_api_getCashSummary", "Getting cash overview"),
+                ("securities_api_getPortfolio", "Getting portfolio overview"),
+                ("mailbox_api_getMessages", "Checking for messages")
+            ]
+            
+            for tool_name, reason in overview_tools:
+                if any(tool.name == tool_name for tool in self.available_tools):
+                    tool_calls.append(ToolCall(
+                        tool_name=tool_name,
+                        arguments={},
+                        reason=f"{reason} as general information"
+                    ))
+                    break  # Only add one overview tool
+        
+        logger.info(f"Enhanced fallback planning created {len(tool_calls)} tool calls")
         return tool_calls
     
-    def _build_tools_description(self) -> str:
-        """Build a detailed description of available tools for LLM."""
+    def _build_enhanced_tools_description(self) -> str:
+        """Build an enhanced description of available tools for LLM with categorization."""
         if not self.available_tools:
             return "No tools available"
         
-        descriptions = []
+        # Categorize tools by API type
+        categories = {
+            "Authentication Tools": [],
+            "Cash Management APIs": [],
+            "Securities APIs": [],
+            "CLS Settlement APIs": [],
+            "Mailbox APIs": [],
+            "Other Tools": []
+        }
+        
         for tool in self.available_tools:
-            desc = f"- {tool.name}: {tool.description}"
+            # Categorize based on tool name
+            if "credential" in tool.name.lower() or "login" in tool.name.lower():
+                category = "Authentication Tools"
+            elif "cash_api" in tool.name.lower():
+                category = "Cash Management APIs"
+            elif "securities_api" in tool.name.lower():
+                category = "Securities APIs"
+            elif "cls_api" in tool.name.lower():
+                category = "CLS Settlement APIs"
+            elif "mailbox_api" in tool.name.lower():
+                category = "Mailbox APIs"
+            else:
+                category = "Other Tools"
             
-            # Add input schema information if available
+            # Build detailed description
+            desc = f"  • {tool.name}: {tool.description}"
+            
+            # Add parameter information
             if tool.inputSchema and "properties" in tool.inputSchema:
                 props = tool.inputSchema["properties"]
                 if props:
-                    param_desc = []
+                    param_details = []
                     for param_name, param_info in props.items():
                         param_type = param_info.get("type", "string")
-                        param_desc.append(f"{param_name} ({param_type})")
-                    desc += f" [Parameters: {', '.join(param_desc)}]"
+                        param_desc = param_info.get("description", "")
+                        if param_desc:
+                            param_details.append(f"{param_name} ({param_type}): {param_desc}")
+                        else:
+                            param_details.append(f"{param_name} ({param_type})")
+                    
+                    if param_details:
+                        desc += f"\n    Parameters: {'; '.join(param_details)}"
             
-            descriptions.append(desc)
+            categories[category].append(desc)
         
-        return "\n".join(descriptions)
+        # Build final description
+        result = []
+        for category, tools in categories.items():
+            if tools:
+                result.append(f"\n{category}:")
+                result.extend(tools)
+        
+        return "\n".join(result)
+    
+    async def _check_authentication_status(self) -> tuple[bool, str]:
+        """Check if the user is currently authenticated.
+        Returns (is_authenticated, status_message)
+        """
+        try:
+            # Try to call a simple tool that requires authentication
+            # This is a heuristic - we assume if we can call any API tool, we're authenticated
+            if self.available_tools:
+                # Look for any API tool to test authentication
+                test_tools = [tool for tool in self.available_tools if "api" in tool.name.lower()]
+                if test_tools:
+                    # Try calling the first API tool with minimal parameters
+                    test_result = await self.call_tool(test_tools[0].name, {})
+                    if test_result.get("status") == "error" and "authentication" in str(test_result.get("message", "")).lower():
+                        return False, "Authentication required"
+                    else:
+                        return True, "Successfully called API"
+            
+            return False, "No API tools available to test"
+        except Exception as e:
+            logger.error(f"Error checking authentication status: {e}")
+            return False, f"Error: {str(e)}"
+    
+    async def _handle_authentication_flow(self, user_query: str) -> str:
+        """Handle authentication flow when needed."""
+        try:
+            # Check if login tool is available
+            login_tools = [tool for tool in self.available_tools if "login" in tool.name.lower()]
+            if login_tools:
+                logger.info("Attempting automatic login...")
+                login_result = await self.call_tool(login_tools[0].name, {})
+                
+                if login_result.get("status") == "success":
+                    return "Successfully logged in! You can now access your financial data."
+                else:
+                    return f"Login failed: {login_result.get('message', 'Unknown error')}. Please check your credentials."
+            else:
+                return "Authentication is required, but no login tools are available. Please set your credentials first."
+        except Exception as e:
+            logger.error(f"Authentication flow error: {e}")
+            return f"Authentication error: {str(e)}"
+    
+    async def _plan_authentication_tools(self, user_query: str) -> List[ToolCall]:
+        """Plan authentication-related tool calls."""
+        tool_calls = []
+        query_lower = user_query.lower()
+        
+        # Check for credential setting requests
+        if "credential" in query_lower or "username" in query_lower or "password" in query_lower:
+            cred_tools = [tool for tool in self.available_tools if "credential" in tool.name.lower()]
+            if cred_tools:
+                tool_calls.append(ToolCall(
+                    tool_name=cred_tools[0].name,
+                    arguments={},
+                    reason="Setting up credentials based on user request"
+                ))
+        
+        # Check for login requests
+        if "login" in query_lower or "authenticate" in query_lower:
+            login_tools = [tool for tool in self.available_tools if "login" in tool.name.lower()]
+            if login_tools:
+                tool_calls.append(ToolCall(
+                    tool_name=login_tools[0].name,
+                    arguments={},
+                    reason="Performing login based on user request"
+                ))
+        
+        return tool_calls
     
     async def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
         """Execute a plan of tool calls with detailed logging."""
@@ -623,8 +802,7 @@ Please provide a comprehensive response based on this information.
         
         try:
             # Ensure we're connected and have tools
-            if not self.session:
-                await self.connect()
+            await self.connect()
             
             if not self.available_tools:
                 await self.list_tools()
