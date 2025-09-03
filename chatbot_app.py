@@ -225,9 +225,19 @@ async def websocket_endpoint(websocket: WebSocket):
             # Parse message data
             try:
                 message_data = json.loads(data)
-                user_message = message_data.get("message", data)
+                # Handle different message formats
+                if "content" in message_data:
+                    user_message = message_data["content"]
+                elif "message" in message_data:
+                    user_message = message_data["message"]
+                else:
+                    user_message = str(message_data)
             except json.JSONDecodeError:
                 user_message = data
+            
+            # Ensure user_message is a string
+            if not isinstance(user_message, str):
+                user_message = str(user_message)
             
             # Send acknowledgment
             await websocket_manager.send_personal_message(
@@ -250,16 +260,20 @@ async def websocket_endpoint(websocket: WebSocket):
                 # Use the new synchronous query processing
                 response = mcp_client.process_query(user_message)
                 
+                # Extract the summary from the response dictionary
+                response_content = response.get("summary", str(response))
+                response_status = response.get("status", "unknown")
+                
                 # Determine response type based on content
                 response_type = "function_calling_response"
-                if is_auth_query and ("successfully" in response.lower() or "authenticated" in response.lower()):
+                if is_auth_query and ("successfully" in response_content.lower() or "authenticated" in response_content.lower()):
                     response_type = "authentication_success"
-                elif "error" in response.lower() or "failed" in response.lower():
+                elif response_status == "error" or "error" in response_content.lower() or "failed" in response_content.lower():
                     response_type = "error_response"
                 
                 # Send response back to client
                 await websocket_manager.send_personal_message(
-                    json.dumps({"type": response_type, "content": response}),
+                    json.dumps({"type": response_type, "content": response_content}),
                     websocket
                 )
                 
