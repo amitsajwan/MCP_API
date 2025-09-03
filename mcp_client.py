@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 from openai import AsyncAzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from tool_categorizer import DynamicToolCategorizer
 
 # Tool type definition
 @dataclass
@@ -85,6 +86,9 @@ class MCPClient:
         
         # Cache for tools and results
         self.tool_results: Dict[str, Any] = {}
+        
+        # Initialize dynamic tool categorizer
+        self.tool_categorizer = DynamicToolCategorizer()
         
 
     
@@ -362,62 +366,59 @@ Guidelines:
 
     
     def _build_enhanced_tools_description(self) -> str:
-        """Build an enhanced description of available tools for LLM with categorization."""
+        """Build an enhanced description of available tools for LLM with dynamic categorization."""
         if not self.available_tools:
             return "No tools available"
         
-        # Categorize tools by API type
-        categories = {
-            "Authentication Tools": [],
-            "Cash Management APIs": [],
-            "Securities APIs": [],
-            "CLS Settlement APIs": [],
-            "Mailbox APIs": [],
-            "Other Tools": []
-        }
-        
+        # Convert MCP tools to dict format for categorizer
+        tools_dict = []
         for tool in self.available_tools:
-            # Categorize based on tool name
-            if "credential" in tool.name.lower() or "login" in tool.name.lower():
-                category = "Authentication Tools"
-            elif "cash_api" in tool.name.lower():
-                category = "Cash Management APIs"
-            elif "securities_api" in tool.name.lower():
-                category = "Securities APIs"
-            elif "cls_api" in tool.name.lower():
-                category = "CLS Settlement APIs"
-            elif "mailbox_api" in tool.name.lower():
-                category = "Mailbox APIs"
-            else:
-                category = "Other Tools"
-            
-            # Build detailed description
-            desc = f"  • {tool.name}: {tool.description}"
-            
-            # Add parameter information
-            if tool.inputSchema and "properties" in tool.inputSchema:
-                props = tool.inputSchema["properties"]
-                if props:
-                    param_details = []
-                    for param_name, param_info in props.items():
-                        param_type = param_info.get("type", "string")
-                        param_desc = param_info.get("description", "")
-                        if param_desc:
-                            param_details.append(f"{param_name} ({param_type}): {param_desc}")
-                        else:
-                            param_details.append(f"{param_name} ({param_type})")
-                    
-                    if param_details:
-                        desc += f"\n    Parameters: {'; '.join(param_details)}"
-            
-            categories[category].append(desc)
+            tools_dict.append({
+                'name': tool.name,
+                'description': tool.description,
+                'inputSchema': tool.inputSchema
+            })
+        
+        # Use dynamic tool categorizer
+        categorized = self.tool_categorizer.categorize_tools(tools_dict)
         
         # Build final description
         result = []
-        for category, tools in categories.items():
+        # Sort categories by priority
+        sorted_categories = sorted(
+            categorized.items(),
+            key=lambda x: self.tool_categorizer.get_category_info(x[0]).priority,
+            reverse=True
+        )
+        
+        for category_id, tools in sorted_categories:
             if tools:
-                result.append(f"\n{category}:")
-                result.extend(tools)
+                category_info = self.tool_categorizer.get_category_info(category_id)
+                result.append(f"\n{category_info.name}:")
+                result.append(f"  {category_info.description}")
+                
+                for tool in tools:
+                    # Build detailed description
+                    desc = f"  • {tool['name']}: {tool['description']}"
+                    
+                    # Add parameter information
+                    input_schema = tool.get('inputSchema', {})
+                    if input_schema and "properties" in input_schema:
+                        props = input_schema["properties"]
+                        if props:
+                            param_details = []
+                            for param_name, param_info in props.items():
+                                param_type = param_info.get("type", "string")
+                                param_desc = param_info.get("description", "")
+                                if param_desc:
+                                    param_details.append(f"{param_name} ({param_type}): {param_desc}")
+                                else:
+                                    param_details.append(f"{param_name} ({param_type})")
+                            
+                            if param_details:
+                                desc += f"\n    Parameters: {'; '.join(param_details)}"
+                    
+                    result.append(desc)
         
         return "\n".join(result)
     
