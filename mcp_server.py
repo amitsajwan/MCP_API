@@ -47,7 +47,7 @@ except ImportError:
 try:
     from config import config
 except ImportError:
-    # Create default config if not available
+    # Fallback configuration if config.py doesn't exist
     class DefaultConfig:
         LOG_LEVEL = "INFO"
         OPENAPI_DIR = "./openapi_specs"
@@ -59,9 +59,17 @@ except ImportError:
         MCP_PORT = 8080
         
         def validate(self):
-            return True
+            pass
     
     config = DefaultConfig()
+
+# Import argument validator
+try:
+    from argument_validator import ArgumentValidator, ValidationResult
+except ImportError:
+    logger.warning("ArgumentValidator not available - validation disabled")
+    ArgumentValidator = None
+    ValidationResult = None
 
 
 # Configure logging
@@ -104,6 +112,13 @@ class MCPServer:
         self.api_specs: Dict[str, APISpec] = {}
         self.api_tools: Dict[str, APITool] = {}
         self.sessions: Dict[str, requests.Session] = {}
+        
+        # Initialize argument validator
+        self.validator = ArgumentValidator() if ArgumentValidator else None
+        if self.validator:
+            logger.info("✅ Argument validator initialized")
+        else:
+            logger.warning("⚠️  Argument validator not available - validation disabled")
         
         # Authentication state - Load from environment if available
         self.username: Optional[str] = os.getenv('API_USERNAME')
@@ -588,6 +603,23 @@ class MCPServer:
             if not self._ensure_authenticated():
                 return {"status": "error", "message": "Authentication failed"}
             
+            # Validate and clean arguments if validator is available
+            if self.validator:
+                validation_result = self.validator.validate_arguments(
+                    arguments, tool.parameters, tool.method
+                )
+                if not validation_result.is_valid:
+                    logger.warning(f"Validation failed for {tool_name}: {validation_result.errors}")
+                    return {
+                        "status": "error", 
+                        "message": f"Validation failed: {'; '.join(validation_result.errors)}"
+                    }
+                # Use cleaned arguments
+                arguments = validation_result.cleaned_args
+                logger.debug(f"Arguments validated and cleaned for {tool_name}")
+            else:
+                logger.debug(f"No validator available - using arguments as-is for {tool_name}")
+
             # Build request URL
             url = f"{spec.base_url.rstrip('/')}{tool.path}"
             
