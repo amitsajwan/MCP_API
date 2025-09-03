@@ -109,62 +109,9 @@ class MCPClient:
             return client
         except Exception as e:
             logging.error(f"Failed to create Azure OpenAI client: {e}")
-            # Mock client for testing if needed
-            return self._create_mock_client()
+            raise e
     
-    def _create_mock_client(self):
-        """Create a mock OpenAI client for testing purposes."""
-        class MockOpenAIClient:
-            def __init__(self):
-                self.chat = MockChat()
-        
-        class MockChat:
-            def __init__(self):
-                self.completions = MockCompletions()
-        
-        class MockCompletions:
-            async def create(self, **kwargs):
-                # Mock response for function calling
-                class MockResponse:
-                    def __init__(self):
-                        self.choices = [MockChoice()]
-                
-                class MockChoice:
-                    def __init__(self):
-                        self.message = MockMessage()
-                
-                class MockMessage:
-                    def __init__(self):
-                        # Simulate function calling based on user query
-                        messages = kwargs.get('messages', [])
-                        user_content = ''
-                        for msg in messages:
-                            if msg.get('role') == 'user':
-                                user_content = msg.get('content', '').lower()
-                        
-                        # Mock function call for common financial queries
-                        if any(word in user_content for word in ['balance', 'cash', 'account', 'summary']):
-                            self.function_call = MockFunctionCall('get_cash_summary', '{}')
-                            self.content = None
-                        elif any(word in user_content for word in ['portfolio', 'positions', 'securities']):
-                            self.function_call = MockFunctionCall('get_portfolio_summary', '{}')
-                            self.content = None
-                        elif any(word in user_content for word in ['login', 'credential', 'auth']):
-                            self.function_call = MockFunctionCall('perform_login', '{}')
-                            self.content = None
-                        else:
-                            self.function_call = None
-                            self.content = "I can help you with financial data. Please specify what information you need (balance, portfolio, etc.)."
-                
-                class MockFunctionCall:
-                    def __init__(self, name, arguments):
-                        self.name = name
-                        self.arguments = arguments
-                
-                return MockResponse()
-        
-        logging.info("Created mock OpenAI client for testing")
-        return MockOpenAIClient()
+
     
     def connect(self):
          """Connect to MCP server via HTTP."""
@@ -458,90 +405,40 @@ Guidelines:
 - Maximum {getattr(config, 'MAX_TOOL_EXECUTIONS', 5)} tool calls allowed"""
 
         try:
-            # Use mock response for GPT-4o client
-            mock_response = self._create_mock_summary_response(user_query, tool_results, tool_calls)
-            return mock_response
+            # Generate summary using Azure OpenAI client
+            return await self._generate_ai_summary(user_query, tool_results, tool_calls)
         except Exception as e:
-            logger.error(f"Error generating summary: {e}")
+            logger.error(f"Error generating AI summary: {e}")
             return self._generate_simple_summary(user_query, tool_results)
     
-    def _create_mock_summary_response(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
-        """Create a mock summary response simulating GPT-4o output."""
+    async def _generate_ai_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
+        """Generate summary using Azure OpenAI client."""
         try:
-            # Simulate OpenAI API call with mock response
-            response_mock = type('MockResponse', (), {
-                'choices': [type('Choice', (), {
-                    'message': type('Message', (), {
-                        'content': self._generate_enhanced_mock_summary(user_query, tool_results, tool_calls)
-                    })()
-                })()
-                ]
-            })()
-            return response_mock.choices[0].message.content.strip()
+            # Prepare messages for OpenAI API
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are a helpful financial assistant. Provide clear, concise summaries of financial data and operations."
+                },
+                {
+                    "role": "user",
+                    "content": f"User query: {user_query}\n\nTool results: {json.dumps([result.to_dict() for result in tool_results], indent=2)}\n\nPlease provide a helpful summary."
+                }
+            ]
+            
+            response = await self.openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=messages,
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content.strip()
         except Exception as e:
-            logger.error(f"Error in mock summary generation: {e}")
+            logger.error(f"Error in AI summary generation: {e}")
             return self._generate_simple_summary(user_query, tool_results)
     
-    def _generate_enhanced_mock_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
-        """Generate an enhanced summary using mock GPT-4o logic."""
-        if not tool_results:
-            return "I wasn't able to retrieve any information for your request."
-        
-        # Analyze successful vs failed results
-        successful_results = [r for r in tool_results if r.success]
-        failed_results = [r for r in tool_results if not r.success]
-        
-        summary_parts = []
-        
-        # Start with a direct answer based on the query type
-        if "login" in user_query.lower() or "credential" in user_query.lower():
-            if any("login" in r.tool_name.lower() for r in successful_results):
-                summary_parts.append("✅ Successfully authenticated with the system.")
-            else:
-                summary_parts.append("❌ Authentication failed or credentials are required.")
-        elif "cash" in user_query.lower() or "balance" in user_query.lower():
-            cash_results = [r for r in successful_results if "cash" in r.tool_name.lower()]
-            if cash_results:
-                summary_parts.append(f"💰 Here's your current cash information: {str(cash_results[0].result)[:200]}")
-            else:
-                summary_parts.append("❌ Unable to retrieve cash balance information.")
-        elif "portfolio" in user_query.lower() or "position" in user_query.lower():
-            portfolio_results = [r for r in successful_results if "portfolio" in r.tool_name.lower()]
-            if portfolio_results:
-                summary_parts.append(f"📊 Here's your portfolio summary: {str(portfolio_results[0].result)[:200]}")
-            else:
-                summary_parts.append("❌ Unable to retrieve portfolio information.")
-        else:
-            # Generic response
-            if successful_results:
-                summary_parts.append(f"✅ Successfully retrieved information using {len(successful_results)} tool(s).")
-            else:
-                summary_parts.append("❌ No information could be retrieved for your request.")
-        
-        # Add details about what was found
-        if successful_results:
-            summary_parts.append("\n📋 **Details:**")
-            for i, result in enumerate(successful_results[:3], 1):  # Limit to first 3 results
-                tool_call = next((tc for tc in tool_calls if tc.tool_name == result.tool_name), None)
-                reason = tool_call.reason if tool_call else "Data retrieval"
-                result_preview = str(result.result)[:150] + "..." if len(str(result.result)) > 150 else str(result.result)
-                summary_parts.append(f"{i}. **{result.tool_name}**: {reason} → {result_preview}")
-        
-        # Add information about failures
-        if failed_results:
-            summary_parts.append(f"\n⚠️ **Issues encountered:** {len(failed_results)} tool(s) failed to execute.")
-            for result in failed_results[:2]:  # Show first 2 failures
-                summary_parts.append(f"- {result.tool_name}: {result.error}")
-        
-        # Add next steps or recommendations
-        if failed_results and not successful_results:
-            summary_parts.append("\n💡 **Suggestions:**")
-            if any("auth" in r.error.lower() or "credential" in r.error.lower() for r in failed_results):
-                summary_parts.append("- Please check your authentication credentials")
-            summary_parts.append("- Verify that the required services are available")
-            summary_parts.append("- Try rephrasing your request or check for typos")
-        
-        return "\n".join(summary_parts)
+
     
     def _old_generate_summary_with_llm(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
         """Original LLM-based summary generation (kept for reference)."""
@@ -946,16 +843,7 @@ Your task:
             logger.error(f"Error processing message: {e}")
             return f"Error processing your request: {str(e)}"
 
-    def process_query(self, user_query: str) -> str:
-        """Synchronous wrapper for process_message.
-        This method is kept for backward compatibility.
-        """
-        import asyncio
-        try:
-            return asyncio.run(self.process_message(user_query))
-        except Exception as e:
-            logger.error(f"Error in process_query: {e}")
-            return f"Error processing your request: {str(e)}"
+
 
     def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
         """Execute a plan of tool calls with detailed logging."""
@@ -995,13 +883,17 @@ Your task:
         
         return results
     
-    def generate_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
-        """Generate a natural language summary of the results with mock GPT-4o response."""
+    async def generate_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
+        """Generate a natural language summary of the results using Azure OpenAI."""
         if not tool_results:
             return "No tools were executed to gather information for your request."
         
-        # Always use mock response - assume GPT-4o client is available
-        return self._create_mock_summary_response(user_query, tool_results, tool_calls)
+        # Use real Azure OpenAI client
+        try:
+            return await self._generate_ai_summary(user_query, tool_results, tool_calls)
+        except Exception as e:
+            logger.error(f"Error generating AI summary: {e}")
+            return self._generate_simple_summary(user_query, tool_results, tool_calls)
     
     def _generate_simple_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
         """Generate a simple summary without LLM."""
@@ -1060,7 +952,7 @@ Your task:
         else:
             return f"Error: {result['message']}"
 
-    def process_query(self, user_query: str) -> Dict[str, Any]:
+    async def process_query(self, user_query: str) -> Dict[str, Any]:
         """Process a user query end-to-end with enhanced reasoning."""
         logger.info(f"Processing query: {user_query}")
         
@@ -1093,7 +985,7 @@ Your task:
             tool_results = self.execute_tool_plan(tool_calls)
             
             # Step 3: Generate enhanced summary with reasoning
-            summary = self.generate_summary(user_query, tool_results, tool_calls)
+            summary = await self.generate_summary(user_query, tool_results, tool_calls)
             
             # Step 4: Create detailed reasoning
             reasoning = self._create_detailed_reasoning(user_query, tool_calls, tool_results)

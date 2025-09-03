@@ -257,8 +257,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 auth_keywords = ['login', 'authenticate', 'credential', 'password', 'username', 'connect', 'setup']
                 is_auth_query = any(keyword in user_message.lower() for keyword in auth_keywords)
                 
-                # Use the new synchronous query processing
-                response = mcp_client.process_query(user_message)
+                # Use the new asynchronous query processing
+                response = await mcp_client.process_query(user_message)
                 
                 # Extract the summary from the response dictionary
                 response_content = response.get("summary", str(response))
