@@ -331,7 +331,7 @@
                                 if (data.type === 'bot_response') {
                                     ws.removeEventListener('message', messageHandler);
                                     resolve(data.content);
-                                } else if (data.type === 'function_calling_response') {
+                                } else if (data.type === 'mcp_response') {
                                     ws.removeEventListener('message', messageHandler);
                                     resolve(data.content);
                                 } else if (data.type === 'fallback_response') {

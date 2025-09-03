@@ -265,7 +265,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 response_status = response.get("status", "unknown")
                 
                 # Determine response type based on content
-                response_type = "function_calling_response"
+                response_type = "mcp_response"
                 if is_auth_query and ("successfully" in response_content.lower() or "authenticated" in response_content.lower()):
                     response_type = "authentication_success"
                 elif response_status == "error" or "error" in response_content.lower() or "failed" in response_content.lower():

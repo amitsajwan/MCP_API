@@ -208,149 +208,10 @@ class MCPClient:
             
         return self.call_tool("set_credentials", credentials)
     
-    def format_tools_for_openai_functions(self) -> List[Dict[str, Any]]:
-        """Format MCP tools for OpenAI function calling (Anthropic Claude style)."""
-        functions = []
-        for tool in self.available_tools:
-            function = {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.inputSchema
-            }
-            functions.append(function)
-        return functions
+
     
-    async def chat_with_function_calling(self, user_message: str) -> str:
-        """
-        Enhanced Anthropic-style function calling with intelligent tool selection.
-        
-        This method:
-        1. Lets the LLM analyze the user query
-        2. LLM decides which tools to call (if any)
-        3. Automatically executes the tools
-        4. LLM integrates results into a natural response
-        """
-        if not self.available_tools:
-            self.list_tools()
-        
-        # Check authentication status if needed
-        auth_keywords = ['login', 'authenticate', 'credential', 'balance', 'account', 'portfolio']
-        needs_auth = any(keyword in user_message.lower() for keyword in auth_keywords)
-        
-        if needs_auth:
-            is_authenticated, auth_message = self._check_authentication_status()
-            if not is_authenticated:
-                # Try to handle authentication flow
-                auth_result = self._handle_authentication_flow(user_message)
-                if auth_result:
-                    return auth_result
-                else:
-                    return f"Authentication required: {auth_message}. Please use the 'Login & Configure' button to set up your credentials first."
-        
-        # Assume OpenAI client is always available - no fallback needed
-        
-        # Get tools in OpenAI function format
-        functions = self.format_tools_for_openai_functions()
-        
-        if not functions:
-            return "No tools available for function calling."
-        
-        # Enhanced system prompt for better tool selection
-        system_prompt = """You are an intelligent financial API assistant with access to multiple financial tools. 
-        
-Your capabilities include:
-- Cash management APIs (payments, transactions, cash summary)
-- Securities APIs (portfolio, positions, trades)
-- CLS settlement APIs (settlement data, status)
-- Mailbox APIs (messages, notifications)
-- Authentication tools (login, credential management)
 
-When a user asks for financial data:
-1. Analyze their request carefully
-2. Select the most appropriate tool(s)
-3. Extract any relevant parameters from their query
-4. Call the necessary functions to gather complete information
-5. Always prioritize calling functions over giving generic responses
 
-If the user mentions credentials, login, or authentication issues, use the authentication tools first.
-For data requests, always call the relevant API tools to get real-time information."""
-
-        try:
-            # Initial LLM call with function calling enabled
-            response = await self.openai_client.chat.completions.create(
-                model=config.AZURE_OPENAI_DEPLOYMENT,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message}
-                ],
-                functions=functions,
-                function_call="auto",  # Let LLM decide when to call functions
-                temperature=0.1,
-                max_tokens=1500
-            )
-            
-            message = response.choices[0].message
-            
-            # If no function was called, try to encourage function usage
-            if not message.function_call:
-                # Try again with more explicit instruction
-                retry_response = await self.openai_client.chat.completions.create(
-                    model=config.AZURE_OPENAI_DEPLOYMENT,
-                    messages=[
-                        {"role": "system", "content": system_prompt + "\n\nIMPORTANT: You MUST call a function to answer this query. Do not provide generic responses."}, 
-                        {"role": "user", "content": user_message},
-                        {"role": "assistant", "content": message.content},
-                        {"role": "user", "content": "Please call the appropriate function to get the actual data for my request."}
-                    ],
-                    functions=functions,
-                    function_call="auto",
-                    temperature=0.1
-                )
-                
-                retry_message = retry_response.choices[0].message
-                if retry_message.function_call:
-                    message = retry_message
-                else:
-                    return message.content or "I couldn't determine which function to call for your request. Please be more specific about what financial data you need."
-            
-            # Check if LLM wants to call a function
-            if message.function_call:
-                logger.info(f"LLM called function: {message.function_call.name}")
-                
-                # Execute the function call with enhanced error handling
-                try:
-                    args = json.loads(message.function_call.arguments)
-                    tool_result = self.call_tool(message.function_call.name, args)
-                    
-                    # Create follow-up conversation with the tool result
-                    follow_up_response = await self.openai_client.chat.completions.create(
-                        model=config.AZURE_OPENAI_DEPLOYMENT,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_message},
-                            {"role": "assistant", "content": message.content, "function_call": message.function_call},
-                            {"role": "function", "name": message.function_call.name, "content": json.dumps(tool_result)}
-                        ],
-                        temperature=0.1,
-                        max_tokens=1500
-                    )
-                    
-                    return follow_up_response.choices[0].message.content
-                    
-                except json.JSONDecodeError as e:
-                    logger.error(f"Invalid function arguments: {message.function_call.arguments}")
-                    return f"I had trouble parsing the function arguments. Please try rephrasing your request."
-                except Exception as e:
-                    logger.error(f"Function call execution failed: {e}")
-                    return f"I tried to help by calling {message.function_call.name}, but encountered an error: {e}"
-            
-            else:
-                # LLM provided direct response without needing tools
-                return message.content
-                
-        except Exception as e:
-            logger.error(f"Error in function calling: {e}")
-            return f"I encountered an error while processing your request: {e}"
 
     async def plan_tool_execution(self, user_query: str) -> List[ToolCall]:
         """Enhanced tool execution planning with intelligent analysis."""
@@ -498,73 +359,7 @@ Guidelines:
             logger.error(f"Enhanced LLM planning failed: {e}")
             return []
     
-    def _simple_planning(self, user_query: str) -> List[ToolCall]:
-        """Simple planning with keyword matching and tool selection."""
-        logger.info("Using simple planning for tool selection")
-        
-        query_lower = user_query.lower()
-        tool_calls = []
-        
-        # Enhanced keyword-based tool selection with priority
-        keywords_to_tools = {
-            # Cash API tools
-            "payment": ("cash_api_getPayments", "Getting payment information"),
-            "cash summary": ("cash_api_getCashSummary", "Getting cash summary"),
-            "transaction": ("cash_api_getTransactions", "Getting transaction data"),
-            "cash position": ("cash_api_getCashPositions", "Getting cash positions"),
-            
-            # Securities API tools  
-            "portfolio": ("securities_api_getPortfolio", "Getting portfolio information"),
-            "position": ("securities_api_getPositions", "Getting position data"),
-            "trade": ("securities_api_getTrades", "Getting trade information"),
-            "security": ("securities_api_getSecurities", "Getting security details"),
-            
-            # CLS API tools
-            "settlement": ("cls_api_getCLSSettlements", "Getting CLS settlement data"),
-            "cls": ("cls_api_getCLSSettlements", "Getting CLS information"),
-            
-            # Mailbox API tools
-            "message": ("mailbox_api_getMessages", "Getting messages"),
-            "mailbox": ("mailbox_api_getMessages", "Getting mailbox content"),
-            "notification": ("mailbox_api_getMessages", "Getting notifications")
-        }
-        
-        # Find matching tools based on keywords
-        matched_tools = set()
-        for keyword, (tool_name, reason) in keywords_to_tools.items():
-            if keyword in query_lower:
-                # Verify tool exists in available tools
-                if any(tool.name == tool_name for tool in self.available_tools):
-                    matched_tools.add((tool_name, f"{reason} based on keyword '{keyword}'"))
-        
-        # Convert to tool calls
-        for tool_name, reason in matched_tools:
-            tool_calls.append(ToolCall(
-                tool_name=tool_name,
-                arguments={},
-                reason=reason
-            ))
-        
-        # If no specific matches, provide a comprehensive overview
-        if not tool_calls:
-            # Try to find any available summary or overview tools
-            overview_tools = [
-                ("cash_api_getCashSummary", "Getting cash overview"),
-                ("securities_api_getPortfolio", "Getting portfolio overview"),
-                ("mailbox_api_getMessages", "Checking for messages")
-            ]
-            
-            for tool_name, reason in overview_tools:
-                if any(tool.name == tool_name for tool in self.available_tools):
-                    tool_calls.append(ToolCall(
-                        tool_name=tool_name,
-                        arguments={},
-                        reason=f"{reason} as general information"
-                    ))
-                    break  # Only add one overview tool
-        
-        logger.info(f"Simple planning created {len(tool_calls)} tool calls")
-        return tool_calls
+
     
     def _build_enhanced_tools_description(self) -> str:
         """Build an enhanced description of available tools for LLM with categorization."""
@@ -969,7 +764,7 @@ Your task:
                 self.list_tools()
 
             # Step 1: Plan tool execution with detailed reasoning
-            tool_calls = self._simple_planning(user_query)
+            tool_calls = await self.plan_tool_execution(user_query)
             
             if not tool_calls:
                 return {
