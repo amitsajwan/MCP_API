@@ -269,12 +269,50 @@ Guidelines:
 - For general requests, select the most comprehensive tool available
 - Maximum {getattr(config, 'MAX_TOOL_EXECUTIONS', 5)} tool calls allowed"""
 
+        # Use the LLM to plan tool calls and parse them
         try:
-            # Generate summary using Azure OpenAI client
-            return await self._generate_ai_summary(user_query, tool_results, tool_calls)
+            response = await self.openai_client.chat.completions.create(
+                model=getattr(config, 'AZURE_OPENAI_DEPLOYMENT', 'gpt-4o'),
+                messages=[
+                    {"role": "system", "content": "You plan tool executions for financial APIs. Output only the requested JSON array."},
+                    {"role": "user", "content": system_prompt},
+                ],
+                temperature=0.1,
+                max_tokens=1000,
+            )
+            content = response.choices[0].message.content
+            logger.info(f"LLM planning response (truncated): {content[:200]}...")
+
+            # Handle potential code fences
+            if '```json' in content:
+                content = content.split('```json', 1)[1].split('```', 1)[0].strip()
+            elif '```' in content:
+                content = content.split('```', 1)[1].strip()
+
+            tool_calls_data = json.loads(content)
+            planned_calls: List[ToolCall] = []
+
+            for call in tool_calls_data:
+                if isinstance(call, dict) and 'tool_name' in call:
+                    # Validate the tool exists
+                    name = call['tool_name']
+                    if any(t.name == name for t in self.available_tools):
+                        planned_calls.append(
+                            ToolCall(
+                                tool_name=name,
+                                arguments=call.get('arguments', {}),
+                                reason=call.get('reason', 'LLM-planned execution'),
+                            )
+                        )
+                    else:
+                        logger.warning(f"LLM suggested unknown tool: {name}")
+
+            if planned_calls:
+                return planned_calls[: getattr(config, 'MAX_TOOL_EXECUTIONS', 5)]
+            return []
         except Exception as e:
-            logger.error(f"Error generating AI summary: {e}")
-            return self._generate_simple_summary(user_query, tool_results, tool_calls)
+            logger.error(f"Enhanced planning failed: {e}")
+            return []
     
     async def _generate_ai_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
         """Generate summary using Azure OpenAI client."""
@@ -308,6 +346,11 @@ Guidelines:
     def _old_generate_summary_with_llm(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
         """Original LLM-based summary generation (kept for reference)."""
         try:
+            # Define the system prompt used for the legacy flow
+            system_prompt = (
+                "You are an expert at planning financial API tool execution. "
+                "Always respond with valid JSON that matches the requested format exactly."
+            )
             # This would be the actual OpenAI API call
             response = self.openai_client.chat.completions.create(
                 model=config.AZURE_OPENAI_DEPLOYMENT,
@@ -518,25 +561,18 @@ Guidelines:
         
         # Step 1: LLM creates execution plan (Navigator role)
         logger.info(f"Planning tool execution for query: {user_message}")
-        tool_plan = await self.plan_tool_execution(user_message)
+        tool_calls = await self.plan_tool_execution(user_message)
         
-        if not tool_plan:
-            # If no tools planned, provide a direct response
-            if self.openai_client:
-                return await self._generate_direct_response(user_message)
-            else:
-                return "I couldn't find any relevant tools to help with your request."
-        
-        # Step 2: We execute the plan (Driver role)
-        logger.info(f"Executing {len(tool_plan)} planned tools")
-        tool_results = self.execute_tool_plan(tool_plan)
-        
-        # Step 3: LLM synthesizes results into natural response
-        if self.openai_client:
-            return await self._synthesize_results(user_message, tool_plan, tool_results)
-        else:
-            # Fallback: format results directly
-            return self._format_results_simple(user_message, tool_results)
+        # Check if tool_calls is empty
+        if not tool_calls:
+            logger.warning("No tools planned for execution.")
+            return "No tools planned for execution."
+
+        # Execute the planned tools
+        tool_results = self.execute_tool_plan(tool_calls)
+
+        # Generate AI summary
+        return await self._generate_ai_summary(user_message, tool_results, tool_calls)
 
     async def _generate_direct_response(self, user_message: str) -> str:
         """Generate a direct response when no tools are needed."""
