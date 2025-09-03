@@ -117,9 +117,9 @@ async def startup_event():
         logger.info("Starting chatbot application...")
         logger.info("🌐 Connecting to HTTP MCP server...")
         
-        # Create HTTP MCP client
-        mcp_client = MCPClient(server_host="localhost", server_port=config.MCP_PORT)
-        await mcp_client.connect()
+        # Create HTTP MCP client with new synchronous constructor
+        mcp_client = MCPClient(mcp_server_url=f"http://localhost:{getattr(config, 'MCP_PORT', 8000)}")
+        mcp_client.connect()
         logger.info("✅ Connected to HTTP MCP server")
         
         logger.info("MCP client initialized successfully")
@@ -136,7 +136,7 @@ async def shutdown_event():
     global mcp_client
     if mcp_client:
         try:
-            await mcp_client.disconnect()
+            mcp_client.disconnect()
             logger.info("MCP client cleaned up")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
@@ -247,8 +247,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 auth_keywords = ['login', 'authenticate', 'credential', 'password', 'username', 'connect', 'setup']
                 is_auth_query = any(keyword in user_message.lower() for keyword in auth_keywords)
                 
-                # Use enhanced Anthropic-style function calling
-                response = await mcp_client.chat_with_function_calling(user_message)
+                # Use the new synchronous query processing
+                response = mcp_client.process_query(user_message)
                 
                 # Determine response type based on content
                 response_type = "function_calling_response"
@@ -264,21 +264,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 )
                 
             except Exception as e:
-                logger.error(f"Error processing message with function calling: {e}")
-                
-                # Fallback to regular processing if function calling fails
-                try:
-                    fallback_response = await mcp_client.process_message(user_message)
-                    await websocket_manager.send_personal_message(
-                        json.dumps({"type": "fallback_response", "content": fallback_response, "details": f"Function calling unavailable: {str(e)}"}),
-                        websocket
-                    )
-                except Exception as fallback_error:
-                    logger.error(f"Fallback processing also failed: {fallback_error}")
-                    await websocket_manager.send_personal_message(
-                        json.dumps({"type": "error", "error": f"Processing failed: {str(fallback_error)}"}),
-                        websocket
-                    )
+                logger.error(f"Error processing message: {e}")
+                await websocket_manager.send_personal_message(
+                    json.dumps({"type": "error", "error": f"Processing failed: {str(e)}"}),
+                    websocket
+                )
                 
     except WebSocketDisconnect:
         websocket_manager.disconnect(websocket)
@@ -292,13 +282,13 @@ async def list_tools():
     
     try:
         # Use MCP client to list tools
-        tools = await mcp_client.list_tools()
+        tools = mcp_client.list_tools()
         tools_info = []
         for tool in tools:
             tools_info.append({
-                "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.inputSchema
+                "name": tool["name"],
+                "description": tool["description"],
+                "input_schema": tool.get("inputSchema", {})
             })
         return {"tools": tools_info}
     except Exception as e:
@@ -320,25 +310,19 @@ async def set_credentials(credentials: CredentialsRequest):
         raise HTTPException(status_code=503, detail="MCP client not initialized")
     
     try:
-        # Use MCP client to call the set_credentials tool
-        tool_response = await mcp_client.call_tool(
-            "set_credentials",
-            {
-                "username": credentials.username,
-                "password": credentials.password,
-                "api_key_name": getattr(config, 'DEFAULT_API_KEY_NAME', None),
-                "api_key_value": getattr(config, 'DEFAULT_API_KEY_VALUE', None),
-                "login_url": getattr(config, 'DEFAULT_LOGIN_URL', None)
-            }
+        # Use MCP client to set credentials
+        result = mcp_client.set_credentials(
+            username=credentials.username,
+            password=credentials.password,
+            api_key=getattr(config, 'DEFAULT_API_KEY_VALUE', None)
         )
         
-        if tool_response.get('status') == 'success':
+        if result.get('status') == 'success':
             return {"status": "success", "message": "Credentials stored successfully"}
         else:
-            raise ValueError(f"Failed to set credentials: {tool_response.get('message')}")
+            raise ValueError(f"Failed to set credentials: {result.get('message')}")
             
     except Exception as e:
-        logger.error(f"Error setting credentials: {e}")
         logger.error(f"Error setting credentials: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -350,8 +334,8 @@ async def login():
         raise HTTPException(status_code=503, detail="MCP client not initialized")
     
     try:
-        # Use MCP client to call the perform_login tool
-        result = await mcp_client.perform_login()
+        # Use MCP client to perform login
+        result = mcp_client.perform_login()
         if result.get("status") == "success":
             return {"status": "success", "message": "Login successful"}
         else:

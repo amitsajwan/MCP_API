@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
 """
-MCP Client - Real MCP Protocol Implementation
-Proper MCP client that follows the official MCP specification:
-- Uses MCP protocol for tool discovery and calling
-- Connects to MCP server via stdio transport
-- Uses LLM for planning and orchestration
-- Handles multi-step tool execution with detailed reasoning
+MCP Client - Production HTTP-Only Implementation
+Optimized MCP client for production use:
+- HTTP-only communication with MCP server
+- Synchronous OpenAI client for better reliability
+- Preserved authentication and login logic
+- Streamlined tool execution flow
 """
 
-import asyncio
 import logging
 import json
-import sys
 import os
+import requests
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 
-import aiohttp
-from openai import AzureOpenAI
+from openai import AsyncAzureOpenAI
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-# MCP types for tool definitions
-from mcp.types import Tool
+# Tool type definition
+@dataclass
+class Tool:
+    name: str
+    description: str
+    inputSchema: Dict[str, Any]
 
 # Import config or create default
 try:
@@ -65,119 +68,132 @@ class ToolResult:
 
 
 class MCPClient:
-    """MCP Client for connecting to HTTP MCP server."""
+    """Production MCP Client with HTTP-only communication"""
     
-    def __init__(self, server_host: str = "localhost", server_port: int = 8081):
-        """
-        Initialize MCP Client for HTTP server connection.
+    def __init__(self, mcp_server_url: str = "http://localhost:8000", 
+                 openai_api_key: str = None, 
+                 openai_model: str = "gpt-4o"):
+        self.server_url = mcp_server_url
+        self.available_tools: List[Tool] = []
+        self.session = requests.Session()
         
-        Args:
-            server_host: Host of the MCP HTTP server
-            server_port: Port of the MCP HTTP server
-        """
-        self.server_host = server_host
-        self.server_port = server_port
-        self.server_url = f"http://{server_host}:{server_port}"
+        # Initialize OpenAI client (optional)
+        try:
+            self.openai_client = OpenAI(
+                api_key=openai_api_key or os.getenv("OPENAI_API_KEY")
+            )
+        except Exception as e:
+            logging.warning(f"Failed to initialize OpenAI client: {e}")
+            self.openai_client = None
+        self.model = openai_model
         
-        # Initialize Azure OpenAI client
-        self.openai_client = self._create_azure_client()
+        logging.info(f"Initialized MCP Client connecting to {mcp_server_url}")
         
         # Cache for tools and results
-        self.available_tools: List[Tool] = []
         self.tool_results: Dict[str, Any] = {}
         
 
     
-    def _create_azure_client(self) -> Optional[AzureOpenAI]:
-        """Create Azure OpenAI client."""
-        if not config.AZURE_OPENAI_ENDPOINT:
-            logger.warning("Azure OpenAI endpoint not configured - using fallback planning")
+    def _create_openai_client(self) -> Optional[AsyncAzureOpenAI]:
+        """Create Azure OpenAI client with azure_ad_token_provider."""
+        azure_endpoint = getattr(config, 'AZURE_OPENAI_ENDPOINT', os.getenv("AZURE_OPENAI_ENDPOINT"))
+        if not azure_endpoint:
+            logging.warning("Azure OpenAI endpoint not configured - using fallback planning")
+            self.openai_client = None
             return None
         
         try:
-            client = AzureOpenAI(
-                azure_endpoint=config.AZURE_OPENAI_ENDPOINT,
+            # Create Azure AD token provider
+            credential = DefaultAzureCredential()
+            token_provider = get_bearer_token_provider(
+                credential, "https://cognitiveservices.azure.com/.default"
+            )
+            
+            client = AsyncAzureOpenAI(
+                azure_endpoint=azure_endpoint,
+                azure_ad_token_provider=token_provider,
                 api_version="2024-02-01"
             )
-            logger.info("✅ Azure OpenAI client created")
+            logging.info("✅ Azure OpenAI client created with Azure AD authentication")
+            self.openai_client = client
             return client
         except Exception as e:
-            logger.warning(f"Failed to create Azure OpenAI client: {e} - using fallback planning")
+            logging.warning(f"Failed to create Azure OpenAI client: {e} - using fallback planning")
+            self.openai_client = None
             return None
     
-    async def connect(self):
-        """Connect to MCP server via HTTP."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.server_url}/health") as resp:
-                    if resp.status == 200:
-                        logger.info(f"✅ Connected to HTTP MCP server at {self.server_url}")
-                        return
-                    else:
-                        raise Exception(f"Server health check failed: {resp.status}")
-        except Exception as e:
-            logger.error(f"❌ Failed to connect to HTTP MCP server: {e}")
-            raise
+    def connect(self):
+         """Connect to MCP server via HTTP."""
+         try:
+             response = self.session.get(f"{self.server_url}/health")
+             if response.status_code == 200:
+                 logging.info(f"✅ Connected to HTTP MCP server at {self.server_url}")
+                 return True
+             else:
+                 raise Exception(f"Server health check failed: {response.status_code}")
+         except Exception as e:
+             logging.error(f"❌ Failed to connect to HTTP MCP server: {e}")
+             return False
     
-    async def disconnect(self):
-        """Disconnect from the HTTP MCP server."""
-        logger.info("Disconnected from HTTP MCP server")
+    def disconnect(self):
+         """Disconnect from the HTTP MCP server."""
+         logging.info("Disconnected from HTTP MCP server")
+         if self.session:
+             self.session.close()
     
-    async def close(self):
+    def close(self):
         """Close the MCP client connection. Alias for disconnect."""
-        await self.disconnect()
+        self.disconnect()
     
-    async def list_tools(self) -> List[Tool]:
-        """Get list of available tools from HTTP MCP server."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.server_url}/tools") as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        tools = []
-                        for tool_data in data.get("tools", []):
-                            tool = Tool(
-                                name=tool_data["name"],
-                                description=tool_data["description"],
-                                inputSchema=tool_data.get("inputSchema", {"type": "object"})
-                            )
-                            tools.append(tool)
-                        self.available_tools = tools
-                        logger.info(f"✅ Retrieved {len(tools)} tools from HTTP MCP server")
-                        return tools
-                    else:
-                        raise Exception(f"HTTP {resp.status}")
-        except Exception as e:
-            logger.error(f"Error listing tools: {e}")
-            return []
+    def list_tools(self) -> List[Tool]:
+         """Get list of available tools from HTTP MCP server."""
+         try:
+             response = self.session.get(f"{self.server_url}/tools")
+             if response.status_code == 200:
+                 data = response.json()
+                 tools = []
+                 for tool_data in data.get("tools", []):
+                     tool = Tool(
+                         name=tool_data["name"],
+                         description=tool_data["description"],
+                         inputSchema=tool_data.get("inputSchema", {"type": "object"})
+                     )
+                     tools.append(tool)
+                 self.available_tools = tools
+                 logging.info(f"✅ Retrieved {len(tools)} tools from HTTP MCP server")
+                 return tools
+             else:
+                 raise Exception(f"HTTP {response.status_code}")
+         except Exception as e:
+             logging.error(f"Error listing tools: {e}")
+             return []
     
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Call a specific tool on the HTTP MCP server."""
-        if arguments is None:
-            arguments = {}
-        
-        try:
-            logger.info(f"Calling tool: {tool_name} with arguments: {arguments}")
-            
-            async with aiohttp.ClientSession() as session:
-                payload = {"name": tool_name, "arguments": arguments}
-                async with session.post(f"{self.server_url}/call_tool", json=payload) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        return {"status": "success", "data": result}
-                    else:
-                        error = await resp.text()
-                        return {"status": "error", "message": f"HTTP {resp.status}: {error}"}
-                
-        except Exception as e:
-            logger.error(f"Error calling tool {tool_name}: {e}")
-            return {"status": "error", "message": str(e)}
+    def call_tool(self, tool_name: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
+         """Call a tool on the MCP server."""
+         if arguments is None:
+             arguments = {}
+             
+         try:
+             logging.info(f"Calling tool: {tool_name} with arguments: {arguments}")
+             
+             payload = {"name": tool_name, "arguments": arguments}
+             response = self.session.post(f"{self.server_url}/call_tool", json=payload)
+             
+             if response.status_code == 200:
+                 result = response.json()
+                 return {"status": "success", "data": result}
+             else:
+                 return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
+                 
+         except Exception as e:
+             logging.error(f"Error calling tool {tool_name}: {e}")
+             return {"status": "error", "message": str(e)}
 
-    async def perform_login(self) -> Dict[str, Any]:
+    def perform_login(self) -> Dict[str, Any]:
         """Call the perform_login tool on the MCP server."""
         logger.info("Attempting to perform login via MCP server tool.")
         try:
-            result = await self.call_tool("perform_login")
+            result = self.call_tool("perform_login")
             if result.get("status") == "success":
                 logger.info("✅ Login tool call successful.")
                 return {"status": "success", "message": "Login successful"}
@@ -188,6 +204,18 @@ class MCPClient:
         except Exception as e:
             logger.error(f"Exception when calling perform_login tool: {e}")
             return {"status": "error", "message": str(e)}
+    
+    def set_credentials(self, username: str = None, password: str = None, api_key: str = None) -> Dict[str, Any]:
+        """Set credentials using the set_credentials tool."""
+        credentials = {}
+        if username:
+            credentials["username"] = username
+        if password:
+            credentials["password"] = password
+        if api_key:
+            credentials["api_key"] = api_key
+            
+        return self.call_tool("set_credentials", credentials)
     
     def format_tools_for_openai_functions(self) -> List[Dict[str, Any]]:
         """Format MCP tools for OpenAI function calling (Anthropic Claude style)."""
@@ -212,17 +240,17 @@ class MCPClient:
         4. LLM integrates results into a natural response
         """
         if not self.available_tools:
-            await self.list_tools()
+            self.list_tools()
         
         # Check authentication status if needed
         auth_keywords = ['login', 'authenticate', 'credential', 'balance', 'account', 'portfolio']
         needs_auth = any(keyword in user_message.lower() for keyword in auth_keywords)
         
         if needs_auth:
-            is_authenticated, auth_message = await self._check_authentication_status()
+            is_authenticated, auth_message = self._check_authentication_status()
             if not is_authenticated:
                 # Try to handle authentication flow
-                auth_result = await self._handle_authentication_flow(user_message)
+                auth_result = self._handle_authentication_flow(user_message)
                 if auth_result:
                     return auth_result
                 else:
@@ -230,7 +258,7 @@ class MCPClient:
         
         if not self.openai_client:
             # Fallback to existing method
-            result = await self.process_query(user_message)
+            result = self.process_query(user_message)
             return result.get("summary", "I couldn't process your request.")
         
         # Get tools in OpenAI function format
@@ -261,7 +289,7 @@ For data requests, always call the relevant API tools to get real-time informati
 
         try:
             # Initial LLM call with function calling enabled
-            response = self.openai_client.chat.completions.create(
+            response = await self.openai_client.chat.completions.create(
                 model=config.AZURE_OPENAI_DEPLOYMENT,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -278,7 +306,7 @@ For data requests, always call the relevant API tools to get real-time informati
             # If no function was called, try to encourage function usage
             if not message.function_call:
                 # Try again with more explicit instruction
-                retry_response = self.openai_client.chat.completions.create(
+                retry_response = await self.openai_client.chat.completions.create(
                     model=config.AZURE_OPENAI_DEPLOYMENT,
                     messages=[
                         {"role": "system", "content": system_prompt + "\n\nIMPORTANT: You MUST call a function to answer this query. Do not provide generic responses."}, 
@@ -304,10 +332,10 @@ For data requests, always call the relevant API tools to get real-time informati
                 # Execute the function call with enhanced error handling
                 try:
                     args = json.loads(message.function_call.arguments)
-                    tool_result = await self.call_tool(message.function_call.name, args)
+                    tool_result = self.call_tool(message.function_call.name, args)
                     
                     # Create follow-up conversation with the tool result
-                    follow_up_response = self.openai_client.chat.completions.create(
+                    follow_up_response = await self.openai_client.chat.completions.create(
                         model=config.AZURE_OPENAI_DEPLOYMENT,
                         messages=[
                             {"role": "system", "content": system_prompt},
@@ -335,13 +363,13 @@ For data requests, always call the relevant API tools to get real-time informati
         except Exception as e:
             logger.error(f"Error in function calling: {e}")
             # Fallback to existing method
-            result = await self.process_query(user_message)
+            result = self.process_query(user_message)
             return result.get("summary", "I couldn't process your request.")
 
     async def plan_tool_execution(self, user_query: str) -> List[ToolCall]:
         """Enhanced tool execution planning with intelligent analysis."""
         if not self.available_tools:
-            await self.list_tools()
+            self.list_tools()
         
         # If no tools available, return empty plan
         if not self.available_tools:
@@ -351,10 +379,11 @@ For data requests, always call the relevant API tools to get real-time informati
         # Check if this is an authentication-related query
         auth_keywords = ["login", "credential", "authenticate", "password", "username", "auth"]
         if any(keyword in user_query.lower() for keyword in auth_keywords):
-            return await self._plan_authentication_tools(user_query)
+            return self._plan_authentication_tools(user_query)
         
-        # If no Azure OpenAI client, use enhanced fallback planning
+        # If no OpenAI client, use enhanced fallback planning
         if not self.openai_client:
+            logger.info("No OpenAI client available, using fallback planning")
             return self._enhanced_fallback_planning(user_query)
         
         # Build enhanced tools description for LLM
@@ -393,7 +422,7 @@ Guidelines:
 - Maximum {getattr(config, 'MAX_TOOL_EXECUTIONS', 5)} tool calls allowed"""
 
         try:
-            response = self.openai_client.chat.completions.create(
+            response = await self.openai_client.chat.completions.create(
                 model=config.AZURE_OPENAI_DEPLOYMENT,
                 messages=[
                     {"role": "system", "content": "You are an expert at planning financial API tool execution. Always respond with valid JSON that matches the requested format exactly."},
@@ -576,7 +605,7 @@ Guidelines:
         
         return "\n".join(result)
     
-    async def _check_authentication_status(self) -> tuple[bool, str]:
+    def _check_authentication_status(self) -> tuple[bool, str]:
         """Check if the user is currently authenticated.
         Returns (is_authenticated, status_message)
         """
@@ -588,7 +617,7 @@ Guidelines:
                 test_tools = [tool for tool in self.available_tools if "api" in tool.name.lower()]
                 if test_tools:
                     # Try calling the first API tool with minimal parameters
-                    test_result = await self.call_tool(test_tools[0].name, {})
+                    test_result = self.call_tool(test_tools[0].name, {})
                     if test_result.get("status") == "error" and "authentication" in str(test_result.get("message", "")).lower():
                         return False, "Authentication required"
                     else:
@@ -599,14 +628,14 @@ Guidelines:
             logger.error(f"Error checking authentication status: {e}")
             return False, f"Error: {str(e)}"
     
-    async def _handle_authentication_flow(self, user_query: str) -> str:
+    def _handle_authentication_flow(self, user_query: str) -> str:
         """Handle authentication flow when needed."""
         try:
             # Check if login tool is available
             login_tools = [tool for tool in self.available_tools if "login" in tool.name.lower()]
             if login_tools:
                 logger.info("Attempting automatic login...")
-                login_result = await self.call_tool(login_tools[0].name, {})
+                login_result = self.call_tool(login_tools[0].name, {})
                 
                 if login_result.get("status") == "success":
                     return "Successfully logged in! You can now access your financial data."
@@ -618,7 +647,7 @@ Guidelines:
             logger.error(f"Authentication flow error: {e}")
             return f"Authentication error: {str(e)}"
     
-    async def _plan_authentication_tools(self, user_query: str) -> List[ToolCall]:
+    def _plan_authentication_tools(self, user_query: str) -> List[ToolCall]:
         """Plan authentication-related tool calls."""
         tool_calls = []
         query_lower = user_query.lower()
@@ -644,8 +673,167 @@ Guidelines:
                 ))
         
         return tool_calls
-    
-    async def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
+
+    async def chat_with_mcp_planning(self, user_message: str) -> str:
+        """MCP Planning approach: LLM is the navigator, we are the driver.
+        
+        This method:
+        1. LLM analyzes the query and creates an execution plan
+        2. We execute the planned tools step by step
+        3. LLM synthesizes the results into a natural response
+        """
+        if not self.available_tools:
+            self.list_tools()
+        
+        # Check authentication status if needed
+        auth_keywords = ['login', 'authenticate', 'credential', 'balance', 'account', 'portfolio']
+        needs_auth = any(keyword in user_message.lower() for keyword in auth_keywords)
+        
+        if needs_auth:
+            is_authenticated, auth_message = self._check_authentication_status()
+            if not is_authenticated:
+                # Try to handle authentication flow
+                auth_result = self._handle_authentication_flow(user_message)
+                if auth_result:
+                    return auth_result
+                else:
+                    return f"Authentication required: {auth_message}. Please use the 'Login & Configure' button to set up your credentials first."
+        
+        # Step 1: LLM creates execution plan (Navigator role)
+        logger.info(f"Planning tool execution for query: {user_message}")
+        tool_plan = await self.plan_tool_execution(user_message)
+        
+        if not tool_plan:
+            # If no tools planned, provide a direct response
+            if self.openai_client:
+                return await self._generate_direct_response(user_message)
+            else:
+                return "I couldn't find any relevant tools to help with your request."
+        
+        # Step 2: We execute the plan (Driver role)
+        logger.info(f"Executing {len(tool_plan)} planned tools")
+        tool_results = self.execute_tool_plan(tool_plan)
+        
+        # Step 3: LLM synthesizes results into natural response
+        if self.openai_client:
+            return await self._synthesize_results(user_message, tool_plan, tool_results)
+        else:
+            # Fallback: format results directly
+            return self._format_results_fallback(user_message, tool_results)
+
+    async def _generate_direct_response(self, user_message: str) -> str:
+        """Generate a direct response when no tools are needed."""
+        try:
+            response = await self.openai_client.chat.completions.create(
+                model=config.AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful financial assistant. Provide a direct, informative response to the user's query."
+                    },
+                    {
+                        "role": "user",
+                        "content": user_message
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=500
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Error generating direct response: {e}")
+            return "I'm sorry, I couldn't process your request at the moment."
+
+    async def _synthesize_results(self, user_message: str, tool_plan: List[ToolCall], tool_results: List[ToolResult]) -> str:
+        """Synthesize tool results into a natural response using LLM."""
+        try:
+            # Prepare context about executed tools and their results
+            execution_context = []
+            for tool_call, result in zip(tool_plan, tool_results):
+                execution_context.append({
+                    "tool": tool_call.tool_name,
+                    "reason": tool_call.reason,
+                    "arguments": tool_call.arguments,
+                    "success": result.success,
+                    "result": result.result if result.success else result.error
+                })
+            
+            context_text = json.dumps(execution_context, indent=2)
+            
+            response = await self.openai_client.chat.completions.create(
+                model=config.AZURE_OPENAI_DEPLOYMENT,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are a financial assistant that synthesizes API results into natural, helpful responses.
+                        
+Your task:
+1. Analyze the tool execution results provided
+2. Create a natural, conversational response that directly answers the user's question
+3. Present data in a clear, organized way
+4. If there were errors, explain them helpfully
+5. Be concise but informative
+                        """
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Original question: {user_message}\n\nTool execution results:\n{context_text}\n\nPlease provide a natural response based on these results."
+                    }
+                ],
+                temperature=0.3,
+                max_tokens=1000
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Error synthesizing results: {e}")
+            return self._format_results_fallback(user_message, tool_results)
+
+    def _format_results_fallback(self, user_message: str, tool_results: List[ToolResult]) -> str:
+        """Fallback method to format results when LLM is not available."""
+        if not tool_results:
+            return "No results were obtained from the tools."
+        
+        response_parts = [f"Results for: {user_message}\n"]
+        
+        for i, result in enumerate(tool_results, 1):
+            if result.success:
+                response_parts.append(f"✅ {result.tool_name}:")
+                if isinstance(result.result, dict):
+                    # Format dict results nicely
+                    for key, value in result.result.items():
+                        response_parts.append(f"  • {key}: {value}")
+                else:
+                    response_parts.append(f"  {result.result}")
+            else:
+                response_parts.append(f"❌ {result.tool_name}: {result.error}")
+            
+            if i < len(tool_results):
+                response_parts.append("")
+        
+        return "\n".join(response_parts)
+
+    async def process_message(self, user_message: str) -> str:
+        """Process a user message with MCP planning approach.
+        LLM acts as navigator, we are the driver executing the plan.
+        """
+        try:
+            return await self.chat_with_mcp_planning(user_message)
+        except Exception as e:
+            logger.error(f"Error processing message: {e}")
+            return f"Error processing your request: {str(e)}"
+
+    def process_query(self, user_query: str) -> str:
+        """Synchronous wrapper for process_message.
+        This method is kept for backward compatibility.
+        """
+        import asyncio
+        try:
+            return asyncio.run(self.process_message(user_query))
+        except Exception as e:
+            logger.error(f"Error in process_query: {e}")
+            return f"Error processing your request: {str(e)}"
+
+    def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
         """Execute a plan of tool calls with detailed logging."""
         results = []
         
@@ -655,7 +843,7 @@ Guidelines:
             logger.info(f"Arguments: {tool_call.arguments}")
             
             try:
-                result = await self.call_tool(tool_call.tool_name, tool_call.arguments)
+                result = self.call_tool(tool_call.tool_name, tool_call.arguments)
                 
                 tool_result = ToolResult(
                     tool_name=tool_call.tool_name,
@@ -683,7 +871,7 @@ Guidelines:
         
         return results
     
-    async def generate_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
+    def generate_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
         """Generate a natural language summary of the results with enhanced reasoning."""
         if not tool_results:
             return "No tools were executed to gather information for your request."
@@ -730,11 +918,12 @@ Focus on being:
 Use the execution results to provide concrete information rather than generic responses."""
 
         try:
-            response = self.openai_client.chat.completions.create(
-                model=config.AZURE_OPENAI_DEPLOYMENT,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"""
+            if self.openai_client:
+                response = self.openai_client.chat.completions.create(
+                    model=config.AZURE_OPENAI_DEPLOYMENT,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"""
 User Query: {user_query}
 
 Execution Summary:
@@ -745,12 +934,15 @@ Detailed Results:
 
 Please provide a comprehensive response based on this information.
 """}
-                ],
-                temperature=0.3,
-                max_tokens=800
-            )
-            
-            return response.choices[0].message.content
+                    ],
+                    temperature=0.3,
+                    max_tokens=800
+                )
+                
+                return response.choices[0].message.content
+            else:
+                # Fallback to simple summary if no client
+                return self._generate_simple_summary(user_query, tool_results, tool_calls)
             
         except Exception as e:
             logger.error(f"Summary generation failed: {e}")
@@ -788,27 +980,50 @@ Please provide a comprehensive response based on this information.
         
         return "\n".join(summary_parts)
     
-    async def process_message(self, message: str) -> str:
+    def _generate_simple_summary_fallback(self, user_query: str, tool_results: List[dict], tool_calls: List[dict]) -> str:
+        """Generate a simple summary without OpenAI when using dict format."""
+        summary_parts = [f"Processed query: {user_query}"]
+        
+        if tool_calls:
+            summary_parts.append(f"Executed {len(tool_calls)} tools:")
+            for i, call in enumerate(tool_calls):
+                tool_name = call.get('name', 'unknown')
+                result = tool_results[i] if i < len(tool_results) else {}
+                if result.get('success', False):
+                    summary_parts.append(f"✅ {tool_name}: Success")
+                else:
+                    summary_parts.append(f"❌ {tool_name}: Failed")
+        else:
+            summary_parts.append("No tools were executed")
+        
+        return "\n".join(summary_parts)
+    
+    def process_message(self, message: str) -> str:
         """Process a user message and return a response."""
-        result = await self.process_query(message)
+        result = self.process_query(message)
         if result["status"] == "success":
             return result["summary"]
         else:
             return f"Error: {result['message']}"
 
-    async def process_query(self, user_query: str) -> Dict[str, Any]:
+    def process_query(self, user_query: str) -> Dict[str, Any]:
         """Process a user query end-to-end with enhanced reasoning."""
         logger.info(f"Processing query: {user_query}")
         
         try:
             # Ensure we're connected and have tools
-            await self.connect()
+            if not self.connect():
+                return {
+                    "status": "error",
+                    "message": "Failed to connect to MCP server",
+                    "summary": "I couldn't connect to the MCP server."
+                }
             
             if not self.available_tools:
-                await self.list_tools()
+                self.list_tools()
 
             # Step 1: Plan tool execution with detailed reasoning
-            tool_calls = await self.plan_tool_execution(user_query)
+            tool_calls = self._enhanced_fallback_planning(user_query)
             
             if not tool_calls:
                 return {
@@ -821,10 +1036,10 @@ Please provide a comprehensive response based on this information.
                 }
             
             # Step 2: Execute tools
-            tool_results = await self.execute_tool_plan(tool_calls)
+            tool_results = self.execute_tool_plan(tool_calls)
             
             # Step 3: Generate enhanced summary with reasoning
-            summary = await self.generate_summary(user_query, tool_results, tool_calls)
+            summary = self.generate_summary(user_query, tool_results, tool_calls)
             
             # Step 4: Create detailed reasoning
             reasoning = self._create_detailed_reasoning(user_query, tool_calls, tool_results)
@@ -886,30 +1101,32 @@ Please provide a comprehensive response based on this information.
         return "\n".join(reasoning_parts)
 
 
-async def main():
-    """Example usage of MCP Client - stdio only."""
+def main():
+    """Example usage of MCP Client - HTTP only."""
     print("MCP Client Test")
     print("===============")
     print()
-    print("🔌 Using stdio connection to MCP server")
+    print("🔌 Using HTTP connection to MCP server")
     print("📋 Make sure to start the MCP server first:")
     print("   python mcp_server.py")
     print()
     
-    # Create stdio-only client
+    # Create HTTP-only client
     client = MCPClient()
     
     try:
-        print(f"\n🔗 Connecting to MCP server via stdio...")
-        await client.connect()
+        print(f"\n🔗 Connecting to MCP server via HTTP...")
+        if not client.connect():
+            print("Failed to connect to MCP server")
+            return
         
         print("📋 Listing available tools...")
-        tools = await client.list_tools()
+        tools = client.list_tools()
         print(f"Available tools: {[tool.name for tool in tools[:5]]}..." + (f" and {len(tools)-5} more" if len(tools) > 5 else ""))
         
         if tools:
             print("\n🧪 Testing tool execution...")
-            result = await client.process_query("Show me pending payments")
+            result = client.process_query("Show me pending payments")
             print("Result:")
             print(json.dumps(result, indent=2))
         
@@ -919,9 +1136,8 @@ async def main():
         print("\n💡 Make sure the MCP server is running:")
         print("   python mcp_server.py")
     finally:
-        await client.disconnect()
         print("\n👋 Disconnected from MCP server")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
