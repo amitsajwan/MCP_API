@@ -274,7 +274,7 @@ Guidelines:
             return await self._generate_ai_summary(user_query, tool_results, tool_calls)
         except Exception as e:
             logger.error(f"Error generating AI summary: {e}")
-            return self._generate_simple_summary(user_query, tool_results)
+            return self._generate_simple_summary(user_query, tool_results, tool_calls)
     
     async def _generate_ai_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
         """Generate summary using Azure OpenAI client."""
@@ -301,7 +301,7 @@ Guidelines:
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.error(f"Error in AI summary generation: {e}")
-            return self._generate_simple_summary(user_query, tool_results)
+            return self._generate_simple_summary(user_query, tool_results, tool_calls)
     
 
     
