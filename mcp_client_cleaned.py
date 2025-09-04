@@ -9,6 +9,7 @@ Optimized MCP client for production use:
 """
 
 import logging
+import asyncio
 import json
 import os
 import requests
@@ -66,6 +67,15 @@ class ToolResult:
     success: bool
     result: Any
     error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serializable dict representation of the result."""
+        return {
+            "tool_name": self.tool_name,
+            "success": self.success,
+            "result": self.result,
+            "error": self.error,
+        }
 
 
 class MCPClient:
@@ -272,7 +282,7 @@ Guidelines:
         # Use the LLM to plan tool calls and parse them
         try:
             response = await self.openai_client.chat.completions.create(
-                model=getattr(config, 'AZURE_OPENAI_DEPLOYMENT', 'gpt-4o'),
+                model=self.model,
                 messages=[
                     {"role": "system", "content": "You plan tool executions for financial APIs. Output only the requested JSON array."},
                     {"role": "user", "content": system_prompt},
@@ -330,7 +340,7 @@ Guidelines:
             ]
             
             response = await self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model=self.model,
                 messages=messages,
                 max_tokens=500,
                 temperature=0.7
@@ -341,6 +351,75 @@ Guidelines:
             logger.error(f"Error in AI summary generation: {e}")
             return self._generate_simple_summary(user_query, tool_results, tool_calls)
     
+
+    def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
+        """Execute a plan of tool calls and collect results."""
+        results: List[ToolResult] = []
+        for i, tc in enumerate(tool_calls, 1):
+            logger.info(f"Executing tool {i}/{len(tool_calls)}: {tc.tool_name}")
+            try:
+                raw = self.call_tool(tc.tool_name, tc.arguments)
+                results.append(
+                    ToolResult(
+                        tool_name=tc.tool_name,
+                        success=raw.get("status") == "success",
+                        result=raw.get("data") if raw.get("status") == "success" else None,
+                        error=raw.get("message") if raw.get("status") == "error" else None,
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Exception during tool execution: {e}")
+                results.append(ToolResult(tool_name=tc.tool_name, success=False, result=None, error=str(e)))
+        return results
+
+    def _generate_simple_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
+        successful = [r for r in tool_results if r.success]
+        failed = [r for r in tool_results if not r.success]
+        parts = [f"Query: {user_query}", ""]
+        if successful:
+            parts.append("✅ Successfully executed:")
+            for r in successful:
+                parts.append(f"- {r.tool_name}")
+            parts.append("")
+        if failed:
+            parts.append("❌ Failed:")
+            for r in failed:
+                parts.append(f"- {r.tool_name}: {r.error}")
+            parts.append("")
+        parts.append(f"Total: {len(successful)} successful, {len(failed)} failed")
+        return "\n".join(parts)
+
+    async def process_query(self, user_query: str) -> Dict[str, Any]:
+        """End-to-end: plan tools, execute, summarize, return structured data."""
+        logger.info(f"Processing query: {user_query}")
+        # Ensure connection and tool listing
+        if not self.connect():
+            return {"status": "error", "message": "Failed to connect to MCP server"}
+        if not self.available_tools:
+            self.list_tools()
+
+        # Plan
+        tool_calls = await self.plan_tool_execution(user_query)
+        if not tool_calls:
+            summary = "No suitable tools found for this request."
+            return {"status": "ok", "plan": [], "results": [], "summary": summary}
+
+        # Execute
+        tool_results = self.execute_tool_plan(tool_calls)
+
+        # Summarize
+        try:
+            summary = await self._generate_ai_summary(user_query, tool_results, tool_calls)
+        except Exception as e:
+            logger.error(f"AI summary failed, using simple summary: {e}")
+            summary = self._generate_simple_summary(user_query, tool_results, tool_calls)
+
+        return {
+            "status": "ok",
+            "plan": [{"tool_name": c.tool_name, "arguments": c.arguments, "reason": c.reason} for c in tool_calls],
+            "results": [r.to_dict() for r in tool_results],
+            "summary": summary,
+        }
 
     
 def main():
@@ -368,7 +447,8 @@ def main():
         
         if tools:
             print("\n🧪 Testing tool execution...")
-            result = client.process_query("Show me pending payments")
+            # Ensure we run the async process_query properly
+            result = asyncio.run(client.process_query("Show me pending payments"))
             print("Result:")
             print(json.dumps(result, indent=2))
         
