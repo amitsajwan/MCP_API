@@ -352,6 +352,130 @@ Guidelines:
             return self._generate_simple_summary(user_query, tool_results, tool_calls)
     
 
+    # -------- Argument/schema utilities --------
+    def _get_tool_by_name(self, name: str) -> Optional[Tool]:
+        for t in self.available_tools:
+            if t.name == name:
+                return t
+        return None
+
+    def _get_tool_schema(self, name: str) -> Dict[str, Any]:
+        tool = self._get_tool_by_name(name)
+        if not tool:
+            return {}
+        return tool.inputSchema or {}
+
+    def _validate_args_against_schema(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate args against tool's JSON-like schema. Returns {valid, missing, type_errors}."""
+        schema = self._get_tool_schema(tool_name)
+        result = {"valid": True, "missing": [], "type_errors": []}
+        if not schema or schema.get("type") != "object":
+            return result  # no strict schema to validate
+
+        required = schema.get("required", [])
+        props = schema.get("properties", {})
+
+        # Missing required
+        for k in required:
+            if k not in args or args.get(k) in (None, ""):
+                result["missing"].append(k)
+
+        # Type checks (basic)
+        type_map = {
+            "string": str,
+            "number": (int, float),
+            "integer": int,
+            "boolean": bool,
+            "object": dict,
+            "array": list,
+        }
+        for k, spec in props.items():
+            if k in args and "type" in spec:
+                py_type = type_map.get(spec["type"])  # could be None
+                if py_type and not isinstance(args[k], py_type):
+                    # attempt simple coercions
+                    try:
+                        if spec["type"] == "number":
+                            args[k] = float(args[k])
+                        elif spec["type"] == "integer":
+                            args[k] = int(args[k])
+                        elif spec["type"] == "boolean":
+                            v = str(args[k]).strip().lower()
+                            args[k] = v in ("true", "1", "yes")
+                        # else leave as-is
+                    except Exception:
+                        result["type_errors"].append({"field": k, "expected": spec["type"], "value": args[k]})
+
+        result["valid"] = not result["missing"] and not result["type_errors"]
+        return result
+
+    async def _llm_extract_args_from_query(self, user_query: str, tool_name: str) -> Dict[str, Any]:
+        """Ask LLM to extract arguments for a tool from the user query based on schema."""
+        schema = self._get_tool_schema(tool_name)
+        tool = self._get_tool_by_name(tool_name)
+        desc = tool.description if tool else ""
+        prompt = (
+            "Extract the best-guess JSON arguments for the tool given the user query. "
+            "Only output a JSON object with keys that match the tool schema. If unknown, omit the key.\n\n"
+            f"Tool: {tool_name}\nDescription: {desc}\nSchema: {json.dumps(schema, indent=2)}\n\n"
+            f"User query: {user_query}\n\nJSON arguments only:"
+        )
+        try:
+            resp = await self.openai_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You extract structured parameters as JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0,
+                max_tokens=400,
+            )
+            content = resp.choices[0].message.content.strip()
+            if content.startswith("```"):
+                content = content.split("```", 1)[-1].strip()
+            extracted = json.loads(content)
+            return extracted if isinstance(extracted, dict) else {}
+        except Exception as e:
+            logger.warning(f"LLM arg extraction failed for {tool_name}: {e}")
+            return {}
+
+    async def _ensure_arguments_for_calls(self, user_query: str, tool_calls: List[ToolCall]) -> Dict[str, Any]:
+        """Validate and try to fill arguments for planned tool calls. Returns dict with keys:
+        { ok_calls, needs_input (optional), message (optional) }
+        """
+        ok_calls: List[ToolCall] = []
+        needs: List[Dict[str, Any]] = []
+
+        for tc in tool_calls:
+            args = dict(tc.arguments or {})
+            validation = self._validate_args_against_schema(tc.tool_name, args)
+            if not validation["valid"]:
+                # Try LLM extraction from query
+                inferred = await self._llm_extract_args_from_query(user_query, tc.tool_name)
+                args.update({k: v for k, v in inferred.items() if k not in args or args[k] in (None, "")})
+                # Re-validate
+                validation = self._validate_args_against_schema(tc.tool_name, args)
+
+            if validation["valid"]:
+                ok_calls.append(ToolCall(tool_name=tc.tool_name, arguments=args, reason=tc.reason))
+            else:
+                needs.append({
+                    "tool": tc.tool_name,
+                    "missing": validation["missing"],
+                    "type_errors": validation["type_errors"],
+                    "schema": self._get_tool_schema(tc.tool_name),
+                })
+
+        if needs:
+            # Build a concise clarification message
+            parts = ["Some required information is missing:"]
+            for n in needs:
+                miss = ", ".join(n["missing"]) if n["missing"] else ""
+                parts.append(f"- {n['tool']}: missing [{miss}]")
+            return {"needs_input": needs, "message": "\n".join(parts)}
+
+        return {"ok_calls": ok_calls}
+
     def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
         """Execute a plan of tool calls and collect results."""
         results: List[ToolResult] = []
@@ -404,19 +528,30 @@ Guidelines:
             summary = "No suitable tools found for this request."
             return {"status": "ok", "plan": [], "results": [], "summary": summary}
 
+        # Validate/fill arguments according to schema (LLM-assisted)
+        arg_check = await self._ensure_arguments_for_calls(user_query, tool_calls)
+        if "needs_input" in arg_check:
+            return {
+                "status": "needs_input",
+                "plan": [{"tool_name": c.tool_name, "arguments": c.arguments, "reason": c.reason} for c in tool_calls],
+                "missing": arg_check["needs_input"],
+                "message": arg_check["message"],
+            }
+        ok_calls = arg_check["ok_calls"]
+
         # Execute
-        tool_results = self.execute_tool_plan(tool_calls)
+        tool_results = self.execute_tool_plan(ok_calls)
 
         # Summarize
         try:
-            summary = await self._generate_ai_summary(user_query, tool_results, tool_calls)
+            summary = await self._generate_ai_summary(user_query, tool_results, ok_calls)
         except Exception as e:
             logger.error(f"AI summary failed, using simple summary: {e}")
-            summary = self._generate_simple_summary(user_query, tool_results, tool_calls)
+            summary = self._generate_simple_summary(user_query, tool_results, ok_calls)
 
         return {
             "status": "ok",
-            "plan": [{"tool_name": c.tool_name, "arguments": c.arguments, "reason": c.reason} for c in tool_calls],
+            "plan": [{"tool_name": c.tool_name, "arguments": c.arguments, "reason": c.reason} for c in ok_calls],
             "results": [r.to_dict() for r in tool_results],
             "summary": summary,
         }
