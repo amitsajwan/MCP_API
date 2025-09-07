@@ -19,11 +19,8 @@ from dataclasses import dataclass
 from openai import AsyncAzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-# Import tool categorizer (optional)
-try:
-    from tool_categorizer import DynamicToolCategorizer
-except ImportError:
-    DynamicToolCategorizer = None
+# Optional tool categorizer (disabled by default; set to None to avoid import issues)
+DynamicToolCategorizer = None
 
 # Tool type definition
 @dataclass
@@ -89,21 +86,21 @@ class MCPClient:
     def __init__(self, mcp_server_url: str = "http://localhost:8000", 
                  openai_api_key: str = None, 
                  openai_model: str = "gpt-4o"):
-        self.server_url = mcp_server_url
-        self.available_tools: List[Tool] = []
-        self.session = requests.Session()
-        
-        # Initialize OpenAI client - assume GPT-4o is available
-        self.openai_client = self._create_openai_client()
-        self.model = openai_model
-        
-        logging.info(f"Initialized MCP Client connecting to {mcp_server_url}")
-        
-        # Cache for tools and results
-        self.tool_results: Dict[str, Any] = {}
-        
-        # Initialize dynamic tool categorizer (if available)
-        self.tool_categorizer = DynamicToolCategorizer() if DynamicToolCategorizer else None
+            self.server_url = mcp_server_url
+            self.available_tools: List[Tool] = []
+            self.session = requests.Session()
+            
+            # Lazy init OpenAI client - only create when needed
+            self.openai_client = None
+            self.model = openai_model
+            
+            logging.info(f"Initialized MCP Client connecting to {mcp_server_url}")
+
+            # Cache for tools and results
+            self.tool_results = {}
+
+            # Initialize dynamic tool categorizer (if available)
+            self.tool_categorizer = DynamicToolCategorizer() if DynamicToolCategorizer else None
         
 
     
@@ -286,6 +283,8 @@ Guidelines:
 
         # Use the LLM to plan tool calls and parse them
         try:
+            if not self.openai_client:
+                self.openai_client = self._create_openai_client()
             response = await self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -344,6 +343,8 @@ Guidelines:
                 }
             ]
             
+            if not self.openai_client:
+                self.openai_client = self._create_openai_client()
             response = await self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -426,6 +427,8 @@ Guidelines:
             f"User query: {user_query}\n\nJSON arguments only:"
         )
         try:
+            if not self.openai_client:
+                self.openai_client = self._create_openai_client()
             resp = await self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=[

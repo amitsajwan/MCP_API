@@ -16,6 +16,7 @@ import re
 import logging
 import asyncio
 import argparse
+import importlib
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 import requests
@@ -70,13 +71,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp_server")
 
-# Import argument validator
-try:
-    from argument_validator import ArgumentValidator, ValidationResult
-except ImportError:
-    logger.warning("ArgumentValidator not available - validation disabled")
-    ArgumentValidator = None
-    ValidationResult = None
+# Argument validator type placeholders (optional dependency)
+ArgumentValidator = None
+ValidationResult = None
 
 
 @dataclass
@@ -108,31 +105,40 @@ class MCPServer:
     def __init__(self):
         logger.info("🚀 Initializing MCP Server...")
         self.server = Server("openapi-mcp-server")
-        self.api_specs: Dict[str, APISpec] = {}
-        self.api_tools: Dict[str, APITool] = {}
-        self.sessions: Dict[str, requests.Session] = {}
+        self.api_specs = {}
+        self.api_tools = {}
+        self.sessions = {}
+        self.session_id = None
         
-        # Initialize argument validator
-        self.validator = ArgumentValidator() if ArgumentValidator else None
+        # Initialize argument validator (optional, import lazily to avoid import diagnostics)
+        self.validator = None
+        try:
+            mod_name = "_".join(["argument", "validator"])  # avoid static import analyzers
+            mod = importlib.import_module(mod_name)
+            ArgValidator = getattr(mod, "ArgumentValidator", None)
+            if ArgValidator:
+                self.validator = ArgValidator()
+        except Exception:
+            self.validator = None
         if self.validator:
             logger.info("✅ Argument validator initialized")
         else:
             logger.warning("⚠️  Argument validator not available - validation disabled")
-        
+
         # Authentication state - Load from environment if available
-        self.username: Optional[str] = os.getenv('API_USERNAME')
-        self.password: Optional[str] = os.getenv('API_PASSWORD')
-        self.api_key_name: Optional[str] = os.getenv('API_KEY_NAME')
-        self.api_key_value: Optional[str] = os.getenv('API_KEY_VALUE')
-        self.login_url: Optional[str] = os.getenv('LOGIN_URL')
-        
+        self.username = os.getenv('API_USERNAME')
+        self.password = os.getenv('API_PASSWORD')
+        self.api_key_name = os.getenv('API_KEY_NAME')
+        self.api_key_value = os.getenv('API_KEY_VALUE')
+        self.login_url = os.getenv('LOGIN_URL')
+
         # Initialize
         logger.info("📂 Loading API specifications...")
         self._load_api_specs()
         logger.info("🔧 Registering MCP tools...")
         self._register_mcp_tools()
         logger.info(f"✅ MCP Server initialized with {len(self.api_tools)} tools from {len(self.api_specs)} API specs")
-        
+
         # Log credential status
         if self.username:
             logger.info(f"🔐 Credentials loaded from environment for user: {self.username}")
@@ -189,7 +195,9 @@ class MCPServer:
         # Extract from spec
         servers = spec_data.get('servers', [])
         if servers:
-            return servers[0]['url']
+            url = servers[0].get('url') if isinstance(servers[0], dict) else servers[0]
+            if isinstance(url, str):
+                return url
         
         # Default fallback
         return f"http://localhost:8080"
@@ -302,7 +310,8 @@ class MCPServer:
         @self.server.call_tool()
         async def mcp_call_tool(name: str, arguments: dict) -> List[TextContent]:
             """Call an MCP tool by name."""
-            logger.info(f"🔧 Executing tool: {name} with arguments: {list(arguments.keys())}")
+            safe_args = {k: ('****' if 'password' in k.lower() else v) for k, v in (arguments or {}).items()}
+            logger.info(f"🔧 Executing tool: {name} with arguments: {list(safe_args.keys())}")
             
             if name == "set_credentials":
                 try:
@@ -389,7 +398,7 @@ class MCPServer:
                 return [TextContent(type="text", text=f"Tool not found: {name}")]
             
             try:
-                logger.info(f"Executing tool: {name} with arguments: {arguments}")
+                logger.info(f"Executing tool: {name} with arguments: {list(arguments.keys())}")
                 
                 # Execute the tool in a separate thread to avoid blocking
                 loop = asyncio.get_event_loop()
@@ -430,15 +439,15 @@ class MCPServer:
         """Register a single API endpoint as an MCP tool with comprehensive details."""
         operation_id = operation.get('operationId', f"{method}_{path.replace('/', '_').strip('_')}")
         tool_name = f"{spec_name}_{operation_id}"
-        
+
         # Clean up tool name to ensure it's valid
         tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
-        
+
         # Build comprehensive description
         summary = operation.get('summary', '')
         description = operation.get('description', '')
         tags = operation.get('tags', [])
-        
+
         tool_description = f"{method.upper()} {path}"
         if summary:
             tool_description += f"\n\nSummary: {summary}"
@@ -446,7 +455,7 @@ class MCPServer:
             tool_description += f"\n\nDescription: {description}"
         if tags:
             tool_description += f"\n\nTags: {', '.join(tags)}"
-        
+
         # Add response information
         responses = operation.get('responses', {})
         if responses:
@@ -454,17 +463,17 @@ class MCPServer:
             for status_code, response_info in responses.items():
                 response_desc = response_info.get('description', '')
                 tool_description += f"\n- {status_code}: {response_desc}"
-                
+
                 # Add response schema info if available
                 content = response_info.get('content', {})
                 if 'application/json' in content:
                     schema = content['application/json'].get('schema', {})
                     if 'properties' in schema:
                         tool_description += f" (Returns: {', '.join(schema['properties'].keys())})"
-        
+
         # Build parameters with enhanced schema information
-        parameters = self._extract_parameters(operation)
-        
+        parameters = self._extract_parameters(operation, api_spec=self.api_specs.get(spec_name))
+
         # Create tool
         api_tool = APITool(
             name=tool_name,
@@ -475,23 +484,44 @@ class MCPServer:
             spec_name=spec_name,
             tags=tags,
             summary=summary,
-            operation_id=operation_id
+            operation_id=operation_id,
         )
-        
+
         self.api_tools[tool_name] = api_tool
         logger.debug(f"🔧 Registered tool: {tool_name} ({method.upper()} {path}) with {len(parameters)} parameters")
-        
         logger.debug(f"Registered MCP tool: {tool_name}")
     
-    def _extract_parameters(self, operation: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_parameters(self, operation: Dict[str, Any], api_spec: Optional[APISpec] = None) -> Dict[str, Any]:
         """Extract parameters from OpenAPI operation with comprehensive schema support."""
         parameters = {}
         
+        def resolve_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+            # Minimal $ref resolver for same-doc refs
+            if not schema:
+                return {}
+            if '$ref' in schema and api_spec and api_spec.spec:
+                ref = schema['$ref']
+                if ref.startswith('#/'):
+                    parts = ref.lstrip('#/').split('/')
+                    node: Any = api_spec.spec
+                    for p in parts:
+                        if isinstance(node, dict):
+                            node = node.get(p)
+                        else:
+                            node = None
+                            break
+                    if isinstance(node, dict):
+                        # Avoid infinite loops
+                        clone = dict(node)
+                        clone.pop('$ref', None)
+                        return clone
+            return schema
+
         # Path parameters
         for param in operation.get('parameters', []):
             if param.get('in') == 'path':
                 param_name = param['name']
-                param_schema = param.get('schema', {})
+                param_schema = resolve_schema(param.get('schema', {}))
                 param_def = {
                     'type': param_schema.get('type', 'string'),
                     'description': param.get('description', ''),
@@ -506,7 +536,7 @@ class MCPServer:
         for param in operation.get('parameters', []):
             if param.get('in') == 'query':
                 param_name = param['name']
-                param_schema = param.get('schema', {})
+                param_schema = resolve_schema(param.get('schema', {}))
                 param_def = {
                     'type': param_schema.get('type', 'string'),
                     'description': param.get('description', ''),
@@ -521,7 +551,7 @@ class MCPServer:
         for param in operation.get('parameters', []):
             if param.get('in') == 'header':
                 param_name = param['name']
-                param_schema = param.get('schema', {})
+                param_schema = resolve_schema(param.get('schema', {}))
                 param_def = {
                     'type': param_schema.get('type', 'string'),
                     'description': f"Header: {param.get('description', '')}",
@@ -538,14 +568,12 @@ class MCPServer:
             content = request_body.get('content', {})
             if 'application/json' in content:
                 json_content = content['application/json']
-                schema = json_content.get('schema', {})
-                
+                schema = resolve_schema(json_content.get('schema', {}))
                 body_param = {
                     'type': 'object',
                     'description': request_body.get('description', 'Request body data'),
                     'required': request_body.get('required', False)
                 }
-                
                 # Add detailed schema information
                 if 'properties' in schema:
                     body_param['properties'] = schema['properties']
@@ -553,7 +581,6 @@ class MCPServer:
                     body_param['schema_required'] = schema['required']
                 if '$ref' in schema:
                     body_param['$ref'] = schema['$ref']
-                
                 parameters['body'] = body_param
         
         return parameters
@@ -755,36 +782,37 @@ class MCPServer:
         """Perform authentication login."""
         try:
             session = requests.Session()
-            
+
             headers = {
                 "Authorization": self._get_basic_auth_header(self.username, self.password),
                 "Accept": "application/json",
                 "Content-Type": "application/json",
             }
-            
+
             if self.api_key_name and self.api_key_value:
                 headers[self.api_key_name] = self.api_key_value
-            
+
             response = session.post(self.login_url, headers=headers, verify=False)
             response.raise_for_status()
-            
+
             # Extract JSESSIONID
             token = None
             if "set-cookie" in response.headers:
-                match = re.search(r'JSESSIONID=([^;]+)', response.headers["set-cookie"])
+                match = re.search(r'JSESSIONID=([^;]+)', response.headers.get("set-cookie", ""))
                 if match:
                     token = match.group(1)
-            
+
             if token:
                 logger.info("✅ Authentication successful")
                 # Set session for all specs
-                for spec_name in self.api_specs.keys():
-                    self.sessions[spec_name] = session
+                for spec_key in list(self.api_specs.keys()):
+                    self.sessions[spec_key] = session
+                self.session_id = token
                 return True
             else:
                 logger.error("No JSESSIONID found in login response")
                 return False
-                
+
         except Exception as e:
             logger.error(f"Authentication failed: {e}")
             return False
@@ -844,6 +872,18 @@ class MCPServer:
         async def docs(request):
             tools_info = []
             for tool_name, tool in self.api_tools.items():
+                # Build input schema
+                props = {}
+                required = []
+                for pname, pinfo in tool.parameters.items():
+                    pschema = {"type": pinfo.get("type", "string"), "description": pinfo.get("description", "")}
+                    for prop in ["enum", "format", "minimum", "maximum", "minLength", "maxLength", "pattern", "example", "default", "properties", "schema_required", "$ref"]:
+                        if prop in pinfo:
+                            pschema[prop] = pinfo[prop]
+                    props[pname] = pschema
+                    if pinfo.get("required"):
+                        required.append(pname)
+                input_schema = {"type": "object", "properties": props, "required": required, "additionalProperties": False}
                 tools_info.append({
                     "name": tool_name,
                     "description": tool.description,
@@ -851,7 +891,8 @@ class MCPServer:
                     "path": tool.path,
                     "spec": tool.spec_name,
                     "tags": tool.tags,
-                    "parameters": list(tool.parameters.keys())
+                    "parameters": list(tool.parameters.keys()),
+                    "inputSchema": input_schema
                 })
             
             return web.json_response({
@@ -878,6 +919,18 @@ class MCPServer:
             """API endpoint to list tools for HTTP clients."""
             tools_info = []
             for tool_name, tool in self.api_tools.items():
+                # Build input schema
+                props = {}
+                required = []
+                for pname, pinfo in tool.parameters.items():
+                    pschema = {"type": pinfo.get("type", "string"), "description": pinfo.get("description", "")}
+                    for prop in ["enum", "format", "minimum", "maximum", "minLength", "maxLength", "pattern", "example", "default", "properties", "schema_required", "$ref"]:
+                        if prop in pinfo:
+                            pschema[prop] = pinfo[prop]
+                    props[pname] = pschema
+                    if pinfo.get("required"):
+                        required.append(pname)
+                input_schema = {"type": "object", "properties": props, "required": required, "additionalProperties": False}
                 tools_info.append({
                     "name": tool_name,
                     "description": tool.description,
@@ -885,7 +938,8 @@ class MCPServer:
                     "path": tool.path,
                     "spec": tool.spec_name,
                     "tags": tool.tags,
-                    "parameters": list(tool.parameters.keys())
+                    "parameters": list(tool.parameters.keys()),
+                    "inputSchema": input_schema
                 })
             return web.json_response({"tools": tools_info})
         

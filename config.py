@@ -75,35 +75,33 @@ class Config:
     
     @classmethod
     def validate(cls) -> bool:
-        """Validate required configuration."""
+        """Validate configuration and warn if required Azure settings are missing.
+
+        This validation is non-fatal by default to keep local/dev workflows running
+        even when Azure settings are not configured. Set STRICT_CONFIG=true in .env
+        to enforce hard failures.
+        """
+        strict = os.getenv('STRICT_CONFIG', 'false').lower() == 'true'
+
         if cls.USE_AZURE_AD_TOKEN_PROVIDER:
-            # Azure AD Token Provider mode
-            required_fields = [
-                'AZURE_OPENAI_ENDPOINT'
-            ]
+            required_fields = ['AZURE_OPENAI_ENDPOINT']
         else:
-            # API Key mode
-            required_fields = [
-                'AZURE_OPENAI_ENDPOINT',
-                'AZURE_OPENAI_API_KEY'
-            ]
-        
-        missing_fields = []
-        for field in required_fields:
-            if not getattr(cls, field):
-                missing_fields.append(field)
-        
+            required_fields = ['AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY']
+
+        missing_fields = [f for f in required_fields if not getattr(cls, f)]
+
         if missing_fields:
-            print(f"❌ Missing required configuration: {', '.join(missing_fields)}")
+            prefix = "❌" if strict else "⚠️"
+            print(f"{prefix} Missing Azure OpenAI configuration: {', '.join(missing_fields)}")
             if cls.USE_AZURE_AD_TOKEN_PROVIDER:
-                print("💡 For Azure AD Token Provider mode, ensure you have:")
-                print("   - AZURE_OPENAI_ENDPOINT set")
-                print("   - Azure CLI logged in or appropriate Azure credentials configured")
-                print("   - Proper permissions to access the Azure OpenAI resource")
+                print("   Azure AD Token Provider mode expected. Tips:")
+                print("   - Set AZURE_OPENAI_ENDPOINT in .env")
+                print("   - Ensure Azure CLI is logged in or credentials are available")
             else:
-                print("💡 Copy config.env.example to .env and configure the missing values")
-            return False
-        
+                print("   API Key mode expected. Tips:")
+                print("   - Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in .env")
+            if strict:
+                return False
         return True
     
     @classmethod

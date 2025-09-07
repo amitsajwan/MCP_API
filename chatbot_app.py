@@ -300,9 +300,9 @@ async def list_tools():
         tools_info = []
         for tool in tools:
             tools_info.append({
-                "name": tool["name"],
-                "description": tool["description"],
-                "input_schema": tool.get("inputSchema", {})
+                "name": getattr(tool, "name", None) or (tool.get("name") if isinstance(tool, dict) else None),
+                "description": getattr(tool, "description", None) or (tool.get("description") if isinstance(tool, dict) else None),
+                "input_schema": getattr(tool, "inputSchema", None) or (tool.get("inputSchema") if isinstance(tool, dict) else {})
             })
         return {"tools": tools_info}
     except Exception as e:
