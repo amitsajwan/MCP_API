@@ -9,6 +9,7 @@ Optimized MCP client for production use:
 """
 
 import logging
+import asyncio
 import json
 import os
 import requests
@@ -66,6 +67,15 @@ class ToolResult:
     success: bool
     result: Any
     error: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Return a JSON-serializable dict representation of the result."""
+        return {
+            "tool_name": self.tool_name,
+            "success": self.success,
+            "result": self.result,
+            "error": self.error,
+        }
 
 
 class MCPClient:
@@ -272,7 +282,7 @@ Guidelines:
         # Use the LLM to plan tool calls and parse them
         try:
             response = await self.openai_client.chat.completions.create(
-                model=getattr(config, 'AZURE_OPENAI_DEPLOYMENT', 'gpt-4o'),
+                model=self.model,
                 messages=[
                     {"role": "system", "content": "You plan tool executions for financial APIs. Output only the requested JSON array."},
                     {"role": "user", "content": system_prompt},
@@ -330,7 +340,7 @@ Guidelines:
             ]
             
             response = await self.openai_client.chat.completions.create(
-                model="gpt-4",
+                model=self.model,
                 messages=messages,
                 max_tokens=500,
                 temperature=0.7
@@ -342,543 +352,211 @@ Guidelines:
             return self._generate_simple_summary(user_query, tool_results, tool_calls)
     
 
-    
-    def _old_generate_summary_with_llm(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
-        """Original LLM-based summary generation (kept for reference)."""
-        try:
-            # Define the system prompt used for the legacy flow
-            system_prompt = (
-                "You are an expert at planning financial API tool execution. "
-                "Always respond with valid JSON that matches the requested format exactly."
-            )
-            # This would be the actual OpenAI API call
-            response = self.openai_client.chat.completions.create(
-                model=config.AZURE_OPENAI_DEPLOYMENT,
-                messages=[
-                    {"role": "system", "content": "You are an expert at planning financial API tool execution. Always respond with valid JSON that matches the requested format exactly."},
-                    {"role": "user", "content": system_prompt}
-                ],
-                temperature=0.1,
-                max_tokens=1500
-            )
-            
-            content = response.choices[0].message.content
-            logger.info(f"Enhanced LLM planning response: {content[:200]}...")
-            
-            # Parse and validate the JSON response
-            try:
-                # Clean up the response if it has markdown formatting
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                elif "```" in content:
-                    content = content.split("```")[1].strip()
-                
-                tool_calls_data = json.loads(content)
-                tool_calls = []
-                
-                for call_data in tool_calls_data:
-                    if isinstance(call_data, dict) and "tool_name" in call_data:
-                        # Validate tool exists
-                        tool_name = call_data["tool_name"]
-                        if any(tool.name == tool_name for tool in self.available_tools):
-                            tool_call = ToolCall(
-                                tool_name=tool_name,
-                                arguments=call_data.get("arguments", {}),
-                                reason=call_data.get("reason", "LLM-planned execution")
-                            )
-                            tool_calls.append(tool_call)
-                        else:
-                            logger.warning(f"LLM suggested non-existent tool: {tool_name}")
-                
-                if tool_calls:
-                    logger.info(f"Enhanced LLM planning created {len(tool_calls)} validated tool calls")
-                    return tool_calls[:getattr(config, 'MAX_TOOL_EXECUTIONS', 5)]  # Limit to max executions
-                else:
-                    logger.info("Enhanced LLM planning returned no valid tool calls")
-                    return []
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse enhanced LLM response as JSON: {e}")
-                logger.error(f"LLM response was: {content}")
-                return []
-                
-        except Exception as e:
-            logger.error(f"Enhanced LLM planning failed: {e}")
-            return []
-    
+    # -------- Argument/schema utilities --------
+    def _get_tool_by_name(self, name: str) -> Optional[Tool]:
+        for t in self.available_tools:
+            if t.name == name:
+                return t
+        return None
 
-    
-    def _build_enhanced_tools_description(self) -> str:
-        """Build an enhanced description of available tools for LLM with dynamic categorization."""
-        if not self.available_tools:
-            return "No tools available"
-        
-        # Convert MCP tools to dict format for categorizer
-        tools_dict = []
-        for tool in self.available_tools:
-            tools_dict.append({
-                'name': tool.name,
-                'description': tool.description,
-                'inputSchema': tool.inputSchema
-            })
-        
-        # Use dynamic tool categorizer
-        categorized = self.tool_categorizer.categorize_tools(tools_dict)
-        
-        # Build final description
-        result = []
-        # Sort categories by priority
-        sorted_categories = sorted(
-            categorized.items(),
-            key=lambda x: self.tool_categorizer.get_category_info(x[0]).priority,
-            reverse=True
+    def _get_tool_schema(self, name: str) -> Dict[str, Any]:
+        tool = self._get_tool_by_name(name)
+        if not tool:
+            return {}
+        return tool.inputSchema or {}
+
+    def _validate_args_against_schema(self, tool_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate args against tool's JSON-like schema. Returns {valid, missing, type_errors}."""
+        schema = self._get_tool_schema(tool_name)
+        result = {"valid": True, "missing": [], "type_errors": []}
+        if not schema or schema.get("type") != "object":
+            return result  # no strict schema to validate
+
+        required = schema.get("required", [])
+        props = schema.get("properties", {})
+
+        # Missing required
+        for k in required:
+            if k not in args or args.get(k) in (None, ""):
+                result["missing"].append(k)
+
+        # Type checks (basic)
+        type_map = {
+            "string": str,
+            "number": (int, float),
+            "integer": int,
+            "boolean": bool,
+            "object": dict,
+            "array": list,
+        }
+        for k, spec in props.items():
+            if k in args and "type" in spec:
+                py_type = type_map.get(spec["type"])  # could be None
+                if py_type and not isinstance(args[k], py_type):
+                    # attempt simple coercions
+                    try:
+                        if spec["type"] == "number":
+                            args[k] = float(args[k])
+                        elif spec["type"] == "integer":
+                            args[k] = int(args[k])
+                        elif spec["type"] == "boolean":
+                            v = str(args[k]).strip().lower()
+                            args[k] = v in ("true", "1", "yes")
+                        # else leave as-is
+                    except Exception:
+                        result["type_errors"].append({"field": k, "expected": spec["type"], "value": args[k]})
+
+        result["valid"] = not result["missing"] and not result["type_errors"]
+        return result
+
+    async def _llm_extract_args_from_query(self, user_query: str, tool_name: str) -> Dict[str, Any]:
+        """Ask LLM to extract arguments for a tool from the user query based on schema."""
+        schema = self._get_tool_schema(tool_name)
+        tool = self._get_tool_by_name(tool_name)
+        desc = tool.description if tool else ""
+        prompt = (
+            "Extract the best-guess JSON arguments for the tool given the user query. "
+            "Only output a JSON object with keys that match the tool schema. If unknown, omit the key.\n\n"
+            f"Tool: {tool_name}\nDescription: {desc}\nSchema: {json.dumps(schema, indent=2)}\n\n"
+            f"User query: {user_query}\n\nJSON arguments only:"
         )
-        
-        for category_id, tools in sorted_categories:
-            if tools:
-                category_info = self.tool_categorizer.get_category_info(category_id)
-                result.append(f"\n{category_info.name}:")
-                result.append(f"  {category_info.description}")
-                
-                for tool in tools:
-                    # Build detailed description
-                    desc = f"  • {tool['name']}: {tool['description']}"
-                    
-                    # Add parameter information
-                    input_schema = tool.get('inputSchema', {})
-                    if input_schema and "properties" in input_schema:
-                        props = input_schema["properties"]
-                        if props:
-                            param_details = []
-                            for param_name, param_info in props.items():
-                                param_type = param_info.get("type", "string")
-                                param_desc = param_info.get("description", "")
-                                if param_desc:
-                                    param_details.append(f"{param_name} ({param_type}): {param_desc}")
-                                else:
-                                    param_details.append(f"{param_name} ({param_type})")
-                            
-                            if param_details:
-                                desc += f"\n    Parameters: {'; '.join(param_details)}"
-                    
-                    result.append(desc)
-        
-        return "\n".join(result)
-    
-    def _check_authentication_status(self) -> tuple[bool, str]:
-        """Check if the user is currently authenticated.
-        Returns (is_authenticated, status_message)
-        """
         try:
-            # Try to call a simple tool that requires authentication
-            # This is a heuristic - we assume if we can call any API tool, we're authenticated
-            if self.available_tools:
-                # Look for any API tool to test authentication
-                test_tools = [tool for tool in self.available_tools if "api" in tool.name.lower()]
-                if test_tools:
-                    # Try calling the first API tool with minimal parameters
-                    test_result = self.call_tool(test_tools[0].name, {})
-                    if test_result.get("status") == "error" and "authentication" in str(test_result.get("message", "")).lower():
-                        return False, "Authentication required"
-                    else:
-                        return True, "Successfully called API"
-            
-            return False, "No API tools available to test"
-        except Exception as e:
-            logger.error(f"Error checking authentication status: {e}")
-            return False, f"Error: {str(e)}"
-    
-    def _handle_authentication_flow(self, user_query: str) -> str:
-        """Handle authentication flow when needed."""
-        try:
-            # Check if login tool is available
-            login_tools = [tool for tool in self.available_tools if "login" in tool.name.lower()]
-            if login_tools:
-                logger.info("Attempting automatic login...")
-                login_result = self.call_tool(login_tools[0].name, {})
-                
-                if login_result.get("status") == "success":
-                    return "Successfully logged in! You can now access your financial data."
-                else:
-                    return f"Login failed: {login_result.get('message', 'Unknown error')}. Please check your credentials."
-            else:
-                return "Authentication is required, but no login tools are available. Please set your credentials first."
-        except Exception as e:
-            logger.error(f"Authentication flow error: {e}")
-            return f"Authentication error: {str(e)}"
-    
-    def _plan_authentication_tools(self, user_query: str) -> List[ToolCall]:
-        """Plan authentication-related tool calls."""
-        tool_calls = []
-        query_lower = user_query.lower()
-        
-        # Check for credential setting requests
-        if "credential" in query_lower or "username" in query_lower or "password" in query_lower:
-            cred_tools = [tool for tool in self.available_tools if "credential" in tool.name.lower()]
-            if cred_tools:
-                tool_calls.append(ToolCall(
-                    tool_name=cred_tools[0].name,
-                    arguments={},
-                    reason="Setting up credentials based on user request"
-                ))
-        
-        # Check for login requests
-        if "login" in query_lower or "authenticate" in query_lower:
-            login_tools = [tool for tool in self.available_tools if "login" in tool.name.lower()]
-            if login_tools:
-                tool_calls.append(ToolCall(
-                    tool_name=login_tools[0].name,
-                    arguments={},
-                    reason="Performing login based on user request"
-                ))
-        
-        return tool_calls
-
-    async def chat_with_mcp_planning(self, user_message: str) -> str:
-        """MCP Planning approach: LLM is the navigator, we are the driver.
-        
-        This method:
-        1. LLM analyzes the query and creates an execution plan
-        2. We execute the planned tools step by step
-        3. LLM synthesizes the results into a natural response
-        """
-        if not self.available_tools:
-            self.list_tools()
-        
-        # Check authentication status if needed
-        auth_keywords = ['login', 'authenticate', 'credential', 'balance', 'account', 'portfolio']
-        needs_auth = any(keyword in user_message.lower() for keyword in auth_keywords)
-        
-        if needs_auth:
-            is_authenticated, auth_message = self._check_authentication_status()
-            if not is_authenticated:
-                # Try to handle authentication flow
-                auth_result = self._handle_authentication_flow(user_message)
-                if auth_result:
-                    return auth_result
-                else:
-                    return f"Authentication required: {auth_message}. Please use the 'Login & Configure' button to set up your credentials first."
-        
-        # Step 1: LLM creates execution plan (Navigator role)
-        logger.info(f"Planning tool execution for query: {user_message}")
-        tool_calls = await self.plan_tool_execution(user_message)
-        
-        # Check if tool_calls is empty
-        if not tool_calls:
-            logger.warning("No tools planned for execution.")
-            return "No tools planned for execution."
-
-        # Execute the planned tools
-        tool_results = self.execute_tool_plan(tool_calls)
-
-        # Generate AI summary
-        return await self._generate_ai_summary(user_message, tool_results, tool_calls)
-
-    async def _generate_direct_response(self, user_message: str) -> str:
-        """Generate a direct response when no tools are needed."""
-        try:
-            response = await self.openai_client.chat.completions.create(
-                model=config.AZURE_OPENAI_DEPLOYMENT,
+            resp = await self.openai_client.chat.completions.create(
+                model=self.model,
                 messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a helpful financial assistant. Provide a direct, informative response to the user's query."
-                    },
-                    {
-                        "role": "user",
-                        "content": user_message
-                    }
+                    {"role": "system", "content": "You extract structured parameters as JSON."},
+                    {"role": "user", "content": prompt},
                 ],
-                temperature=0.7,
-                max_tokens=500
+                temperature=0,
+                max_tokens=400,
             )
-            return response.choices[0].message.content.strip()
+            content = resp.choices[0].message.content.strip()
+            if content.startswith("```"):
+                content = content.split("```", 1)[-1].strip()
+            extracted = json.loads(content)
+            return extracted if isinstance(extracted, dict) else {}
         except Exception as e:
-            logger.error(f"Error generating direct response: {e}")
-            return "I'm sorry, I couldn't process your request at the moment."
+            logger.warning(f"LLM arg extraction failed for {tool_name}: {e}")
+            return {}
 
-    async def _synthesize_results(self, user_message: str, tool_plan: List[ToolCall], tool_results: List[ToolResult]) -> str:
-        """Synthesize tool results into a natural response using LLM."""
-        try:
-            # Prepare context about executed tools and their results
-            execution_context = []
-            for tool_call, result in zip(tool_plan, tool_results):
-                execution_context.append({
-                    "tool": tool_call.tool_name,
-                    "reason": tool_call.reason,
-                    "arguments": tool_call.arguments,
-                    "success": result.success,
-                    "result": result.result if result.success else result.error
+    async def _ensure_arguments_for_calls(self, user_query: str, tool_calls: List[ToolCall]) -> Dict[str, Any]:
+        """Validate and try to fill arguments for planned tool calls. Returns dict with keys:
+        { ok_calls, needs_input (optional), message (optional) }
+        """
+        ok_calls: List[ToolCall] = []
+        needs: List[Dict[str, Any]] = []
+
+        for tc in tool_calls:
+            args = dict(tc.arguments or {})
+            validation = self._validate_args_against_schema(tc.tool_name, args)
+            if not validation["valid"]:
+                # Try LLM extraction from query
+                inferred = await self._llm_extract_args_from_query(user_query, tc.tool_name)
+                args.update({k: v for k, v in inferred.items() if k not in args or args[k] in (None, "")})
+                # Re-validate
+                validation = self._validate_args_against_schema(tc.tool_name, args)
+
+            if validation["valid"]:
+                ok_calls.append(ToolCall(tool_name=tc.tool_name, arguments=args, reason=tc.reason))
+            else:
+                needs.append({
+                    "tool": tc.tool_name,
+                    "missing": validation["missing"],
+                    "type_errors": validation["type_errors"],
+                    "schema": self._get_tool_schema(tc.tool_name),
                 })
-            
-            context_text = json.dumps(execution_context, indent=2)
-            
-            response = await self.openai_client.chat.completions.create(
-                model=config.AZURE_OPENAI_DEPLOYMENT,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": """You are a financial assistant that synthesizes API results into natural, helpful responses.
-                        
-Your task:
-1. Analyze the tool execution results provided
-2. Create a natural, conversational response that directly answers the user's question
-3. Present data in a clear, organized way
-4. If there were errors, explain them helpfully
-5. Be concise but informative
-                        """
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Original question: {user_message}\n\nTool execution results:\n{context_text}\n\nPlease provide a natural response based on these results."
-                    }
-                ],
-                temperature=0.3,
-                max_tokens=1000
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"Error synthesizing results: {e}")
-            return self._format_results_fallback(user_message, tool_results)
 
-    def _format_results_simple(self, user_message: str, tool_results: List[ToolResult]) -> str:
-        """Simple method to format results when LLM processing fails."""
-        if not tool_results:
-            return "No results were obtained from the tools."
-        
-        response_parts = [f"Results for: {user_message}\n"]
-        
-        for i, result in enumerate(tool_results, 1):
-            if result.success:
-                response_parts.append(f"✅ {result.tool_name}:")
-                if isinstance(result.result, dict):
-                    # Format dict results nicely
-                    for key, value in result.result.items():
-                        response_parts.append(f"  • {key}: {value}")
-                else:
-                    response_parts.append(f"  {result.result}")
-            else:
-                response_parts.append(f"❌ {result.tool_name}: {result.error}")
-            
-            if i < len(tool_results):
-                response_parts.append("")
-        
-        return "\n".join(response_parts)
+        if needs:
+            # Build a concise clarification message
+            parts = ["Some required information is missing:"]
+            for n in needs:
+                miss = ", ".join(n["missing"]) if n["missing"] else ""
+                parts.append(f"- {n['tool']}: missing [{miss}]")
+            return {"needs_input": needs, "message": "\n".join(parts)}
 
-    async def process_message(self, user_message: str) -> str:
-        """Process a user message with MCP planning approach.
-        LLM acts as navigator, we are the driver executing the plan.
-        """
-        try:
-            return await self.chat_with_mcp_planning(user_message)
-        except Exception as e:
-            logger.error(f"Error processing message: {e}")
-            return f"Error processing your request: {str(e)}"
-
-
+        return {"ok_calls": ok_calls}
 
     def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
-        """Execute a plan of tool calls with detailed logging."""
-        results = []
-        
-        for i, tool_call in enumerate(tool_calls, 1):
-            logger.info(f"Executing tool {i}/{len(tool_calls)}: {tool_call.tool_name}")
-            logger.info(f"Reason: {tool_call.reason}")
-            logger.info(f"Arguments: {tool_call.arguments}")
-            
+        """Execute a plan of tool calls and collect results."""
+        results: List[ToolResult] = []
+        for i, tc in enumerate(tool_calls, 1):
+            logger.info(f"Executing tool {i}/{len(tool_calls)}: {tc.tool_name}")
             try:
-                result = self.call_tool(tool_call.tool_name, tool_call.arguments)
-                
-                tool_result = ToolResult(
-                    tool_name=tool_call.tool_name,
-                    success=result.get("status") == "success",
-                    result=result.get("data") if result.get("status") == "success" else None,
-                    error=result.get("message") if result.get("status") == "error" else None
+                raw = self.call_tool(tc.tool_name, tc.arguments)
+                results.append(
+                    ToolResult(
+                        tool_name=tc.tool_name,
+                        success=raw.get("status") == "success",
+                        result=raw.get("data") if raw.get("status") == "success" else None,
+                        error=raw.get("message") if raw.get("status") == "error" else None,
+                    )
                 )
-                
-                results.append(tool_result)
-                
-                if tool_result.success:
-                    logger.info(f"✅ Tool {tool_call.tool_name} executed successfully")
-                else:
-                    logger.error(f"❌ Tool {tool_call.tool_name} failed: {tool_result.error}")
-                    # Continue execution even if one tool fails
-                    
             except Exception as e:
                 logger.error(f"Exception during tool execution: {e}")
-                results.append(ToolResult(
-                    tool_name=tool_call.tool_name,
-                    success=False,
-                    result=None,
-                    error=str(e)
-                ))
-        
+                results.append(ToolResult(tool_name=tc.tool_name, success=False, result=None, error=str(e)))
         return results
-    
-    async def generate_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
-        """Generate a natural language summary of the results using Azure OpenAI."""
-        if not tool_results:
-            return "No tools were executed to gather information for your request."
-        
-        # Use real Azure OpenAI client
-        try:
-            return await self._generate_ai_summary(user_query, tool_results, tool_calls)
-        except Exception as e:
-            logger.error(f"Error generating AI summary: {e}")
-            return self._generate_simple_summary(user_query, tool_results, tool_calls)
-    
+
     def _generate_simple_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
-        """Generate a simple summary without LLM."""
-        successful_tools = [r for r in tool_results if r.success]
-        failed_tools = [r for r in tool_results if not r.success]
-        
-        summary_parts = []
-        summary_parts.append(f"Query: {user_query}")
-        summary_parts.append("")
-        
-        if successful_tools:
-            summary_parts.append("✅ Successfully executed:")
-            for result in successful_tools:
-                summary_parts.append(f"  - {result.tool_name}")
-                if result.result:
-                    # Try to show key information from result
-                    result_str = str(result.result)
-                    if len(result_str) > 300:
-                        result_str = result_str[:300] + "..."
-                    summary_parts.append(f"    Result: {result_str}")
-            summary_parts.append("")
-        
-        if failed_tools:
-            summary_parts.append("❌ Failed to execute:")
-            for result in failed_tools:
-                summary_parts.append(f"  - {result.tool_name}: {result.error}")
-            summary_parts.append("")
-        
-        summary_parts.append(f"Total: {len(successful_tools)} successful, {len(failed_tools)} failed")
-        
-        return "\n".join(summary_parts)
-    
-    def _generate_simple_summary_fallback(self, user_query: str, tool_results: List[dict], tool_calls: List[dict]) -> str:
-        """Generate a simple summary without OpenAI when using dict format."""
-        summary_parts = [f"Processed query: {user_query}"]
-        
-        if tool_calls:
-            summary_parts.append(f"Executed {len(tool_calls)} tools:")
-            for i, call in enumerate(tool_calls):
-                tool_name = call.get('name', 'unknown')
-                result = tool_results[i] if i < len(tool_results) else {}
-                if result.get('success', False):
-                    summary_parts.append(f"✅ {tool_name}: Success")
-                else:
-                    summary_parts.append(f"❌ {tool_name}: Failed")
-        else:
-            summary_parts.append("No tools were executed")
-        
-        return "\n".join(summary_parts)
-    
-    def process_message(self, message: str) -> str:
-        """Process a user message and return a response."""
-        result = self.process_query(message)
-        if result["status"] == "success":
-            return result["summary"]
-        else:
-            return f"Error: {result['message']}"
+        successful = [r for r in tool_results if r.success]
+        failed = [r for r in tool_results if not r.success]
+        parts = [f"Query: {user_query}", ""]
+        if successful:
+            parts.append("✅ Successfully executed:")
+            for r in successful:
+                parts.append(f"- {r.tool_name}")
+            parts.append("")
+        if failed:
+            parts.append("❌ Failed:")
+            for r in failed:
+                parts.append(f"- {r.tool_name}: {r.error}")
+            parts.append("")
+        parts.append(f"Total: {len(successful)} successful, {len(failed)} failed")
+        return "\n".join(parts)
 
     async def process_query(self, user_query: str) -> Dict[str, Any]:
-        """Process a user query end-to-end with enhanced reasoning."""
+        """End-to-end: plan tools, execute, summarize, return structured data."""
         logger.info(f"Processing query: {user_query}")
-        
+        # Ensure connection and tool listing
+        if not self.connect():
+            return {"status": "error", "message": "Failed to connect to MCP server"}
+        if not self.available_tools:
+            self.list_tools()
+
+        # Plan
+        tool_calls = await self.plan_tool_execution(user_query)
+        if not tool_calls:
+            summary = "No suitable tools found for this request."
+            return {"status": "ok", "plan": [], "results": [], "summary": summary}
+
+        # Validate/fill arguments according to schema (LLM-assisted)
+        arg_check = await self._ensure_arguments_for_calls(user_query, tool_calls)
+        if "needs_input" in arg_check:
+            return {
+                "status": "needs_input",
+                "plan": [{"tool_name": c.tool_name, "arguments": c.arguments, "reason": c.reason} for c in tool_calls],
+                "missing": arg_check["needs_input"],
+                "message": arg_check["message"],
+            }
+        ok_calls = arg_check["ok_calls"]
+
+        # Execute
+        tool_results = self.execute_tool_plan(ok_calls)
+
+        # Summarize
         try:
-            # Ensure we're connected and have tools
-            if not self.connect():
-                return {
-                    "status": "error",
-                    "message": "Failed to connect to MCP server",
-                    "summary": "I couldn't connect to the MCP server."
-                }
-            
-            if not self.available_tools:
-                self.list_tools()
-
-            # Step 1: Plan tool execution with detailed reasoning
-            tool_calls = await self.plan_tool_execution(user_query)
-            
-            if not tool_calls:
-                return {
-                    "status": "error",
-                    "message": "Could not plan tool execution for this query",
-                    "plan": [],
-                    "results": [],
-                    "reasoning": "I couldn't determine which tools to use for your request. This might be because the available tools don't match your query, or I need more information to understand what you're looking for.",
-                    "summary": "I couldn't determine which tools to use for your request. Please try rephrasing your question or check if the required API endpoints are available."
-                }
-            
-            # Step 2: Execute tools
-            tool_results = self.execute_tool_plan(tool_calls)
-            
-            # Step 3: Generate enhanced summary with reasoning
-            summary = await self.generate_summary(user_query, tool_results, tool_calls)
-            
-            # Step 4: Create detailed reasoning
-            reasoning = self._create_detailed_reasoning(user_query, tool_calls, tool_results)
-            
-            return {
-                "status": "success",
-                "plan": [{"tool_name": tc.tool_name, "arguments": tc.arguments, "reason": tc.reason} for tc in tool_calls],
-                "results": [{"tool_name": tr.tool_name, "success": tr.success, "result": tr.result, "error": tr.error} for tr in tool_results],
-                "reasoning": reasoning,
-                "summary": summary
-            }
-        
+            summary = await self._generate_ai_summary(user_query, tool_results, ok_calls)
         except Exception as e:
-            logger.error(f"Error processing query: {e}")
-            return {
-                "status": "error",
-                "message": str(e),
-                "plan": [],
-                "results": [],
-                "reasoning": f"An error occurred while processing your request: {str(e)}",
-                "summary": f"I encountered an error while processing your request: {str(e)}"
-            }
+            logger.error(f"AI summary failed, using simple summary: {e}")
+            summary = self._generate_simple_summary(user_query, tool_results, ok_calls)
+
+        return {
+            "status": "ok",
+            "plan": [{"tool_name": c.tool_name, "arguments": c.arguments, "reason": c.reason} for c in ok_calls],
+            "results": [r.to_dict() for r in tool_results],
+            "summary": summary,
+        }
+
     
-
-
-    def _create_detailed_reasoning(self, user_query: str, tool_calls: List[ToolCall], tool_results: List[ToolResult]) -> str:
-        """Create detailed human-readable reasoning about the execution."""
-        reasoning_parts = []
-        
-        # Overall approach
-        reasoning_parts.append(f"I analyzed your request: \"{user_query}\"")
-        reasoning_parts.append(f"I planned to execute {len(tool_calls)} tool(s) to gather the necessary information:")
-        
-        # Tool-by-tool reasoning
-        for i, (tool_call, tool_result) in enumerate(zip(tool_calls, tool_results), 1):
-            reasoning_parts.append(f"\n{i}. {tool_call.tool_name}")
-            reasoning_parts.append(f"   Reason: {tool_call.reason}")
-            if tool_result.success:
-                reasoning_parts.append(f"   Status: ✅ Success")
-                if tool_result.result:
-                    result_preview = str(tool_result.result)[:100] + "..." if len(str(tool_result.result)) > 100 else str(tool_result.result)
-                    reasoning_parts.append(f"   Data: {result_preview}")
-            else:
-                reasoning_parts.append(f"   Status: ❌ Failed")
-                reasoning_parts.append(f"   Error: {tool_result.error}")
-        
-        # Execution summary
-        successful = sum(1 for r in tool_results if r.success)
-        total = len(tool_results)
-        reasoning_parts.append(f"\nExecution Summary: {successful}/{total} tools succeeded.")
-        
-        if successful == total:
-            reasoning_parts.append("All tools executed successfully, providing complete information for your query.")
-        elif successful > 0:
-            reasoning_parts.append("Some tools succeeded, providing partial information for your query.")
-        else:
-            reasoning_parts.append("No tools succeeded, so I couldn't gather the requested information.")
-        
-        return "\n".join(reasoning_parts)
-
-
 def main():
     """Example usage of MCP Client - HTTP only."""
     print("MCP Client Test")
@@ -904,7 +582,8 @@ def main():
         
         if tools:
             print("\n🧪 Testing tool execution...")
-            result = client.process_query("Show me pending payments")
+            # Ensure we run the async process_query properly
+            result = asyncio.run(client.process_query("Show me pending payments"))
             print("Result:")
             print(json.dumps(result, indent=2))
         
