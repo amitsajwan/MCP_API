@@ -16,13 +16,13 @@ class Config:
     """Centralized configuration management."""
     
     # MCP Server Configuration
-    MCP_HOST: str = os.getenv('MCP_HOST', '127.0.0.1')
-    MCP_PORT: int = int(os.getenv('MCP_PORT', '8000'))
-    MCP_SERVER_ENDPOINT: str = os.getenv('MCP_SERVER_ENDPOINT', 'http://127.0.0.1:8000')
+    MCP_HOST: str = os.getenv('MCP_HOST', 'localhost')
+    MCP_PORT: int = int(os.getenv('MCP_PORT', '9000'))
+    MCP_SERVER_ENDPOINT: str = os.getenv('MCP_SERVER_ENDPOINT', 'http://localhost:9000')
     
     # Chatbot Application Configuration
     CHATBOT_HOST: str = os.getenv('CHATBOT_HOST', '0.0.0.0')
-    CHATBOT_PORT: int = int(os.getenv('CHATBOT_PORT', '9080'))
+    CHATBOT_PORT: int = int(os.getenv('CHATBOT_PORT', '9099'))
     
     # WebSocket Configuration
     WEBSOCKET_ENABLED: bool = os.getenv('WEBSOCKET_ENABLED', 'true').lower() == 'true'

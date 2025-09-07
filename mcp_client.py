@@ -83,7 +83,7 @@ class ToolResult:
 class MCPClient:
     """Production MCP Client with HTTP-only communication"""
     
-    def __init__(self, mcp_server_url: str = "http://localhost:8000", 
+    def __init__(self, mcp_server_url: str = "http://localhost:9000", 
                  openai_api_key: str = None, 
                  openai_model: str = "gpt-4o"):
             self.server_url = mcp_server_url

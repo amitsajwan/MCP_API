@@ -656,10 +656,13 @@ class MCPServer:
                     if placeholder in url:
                         url = url.replace(placeholder, str(value))
             
-            # Prepare request
+            # Prepare request with comprehensive headers
             headers = {
                 'Accept': 'application/json',
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'User-Agent': 'MCP-Financial-API-Client/1.0',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive'
             }
             
             # Add API key if configured
@@ -672,10 +675,17 @@ class MCPServer:
                     header_name = param_name[7:]  # Remove 'header_' prefix
                     headers[header_name] = str(value)
             
-            # Get session
+            # Get session with proper configuration
             session = self.sessions.get(tool.spec_name)
             if not session:
                 session = requests.Session()
+                # Configure session for better reliability
+                session.headers.update({
+                    'User-Agent': 'MCP-Financial-API-Client/1.0'
+                })
+                # Add session-level authentication if available
+                if self.session_id:
+                    session.cookies.set('JSESSIONID', self.session_id)
                 self.sessions[tool.spec_name] = session
             
             # Prepare request data
@@ -693,8 +703,9 @@ class MCPServer:
                         if placeholder not in tool.path:
                             query_params[param_name] = value
             
-            # Make request
+            # Make request with enhanced error handling
             logger.info(f"Making {tool.method} request to {url}")
+            logger.debug(f"Headers: {dict(headers)}")
             logger.debug(f"Query params: {query_params}")
             logger.debug(f"Request data: {request_data}")
             
@@ -705,7 +716,8 @@ class MCPServer:
                 params=query_params if query_params else None,
                 json=request_data if request_data else None,
                 timeout=getattr(config, 'REQUEST_TIMEOUT', 30),
-                verify=False
+                verify=False,
+                allow_redirects=True
             )
             
             response.raise_for_status()
@@ -726,20 +738,33 @@ class MCPServer:
         except requests.exceptions.RequestException as e:
             error_msg = str(e)
             status_code = None
+            error_details = {}
             
             if hasattr(e, 'response') and e.response is not None:
                 status_code = e.response.status_code
+                error_details['response_headers'] = dict(e.response.headers)
+                error_details['request_url'] = url
+                error_details['request_method'] = tool.method
+                
                 try:
                     error_detail = e.response.json()
-                    error_msg = f"{error_msg}: {error_detail}"
+                    error_msg = f"API Error ({status_code}): {error_detail}"
+                    error_details['response_body'] = error_detail
                 except:
-                    error_msg = f"{error_msg}: {e.response.text}"
+                    error_msg = f"API Error ({status_code}): {e.response.text[:500]}"
+                    error_details['response_text'] = e.response.text[:500]
+            else:
+                error_details['connection_error'] = True
+                error_details['request_url'] = url
+                error_details['request_method'] = tool.method
             
             logger.error(f"API request failed: {error_msg}")
+            logger.debug(f"Error details: {error_details}")
             return {
                 "status": "error",
                 "message": error_msg,
-                "status_code": status_code
+                "status_code": status_code,
+                "error_details": error_details
             }
         except Exception as e:
             logger.error(f"Unexpected error executing tool {tool_name}: {e}", exc_info=True)
@@ -779,7 +804,7 @@ class MCPServer:
         return False
     
     def _perform_login(self) -> bool:
-        """Perform authentication login."""
+        """Perform authentication login with enhanced error handling."""
         try:
             session = requests.Session()
 
@@ -787,12 +812,22 @@ class MCPServer:
                 "Authorization": self._get_basic_auth_header(self.username, self.password),
                 "Accept": "application/json",
                 "Content-Type": "application/json",
+                "User-Agent": "MCP-Financial-API-Client/1.0"
             }
 
             if self.api_key_name and self.api_key_value:
                 headers[self.api_key_name] = self.api_key_value
 
-            response = session.post(self.login_url, headers=headers, verify=False)
+            logger.info(f"Attempting login to {self.login_url}")
+            logger.debug(f"Login headers: {dict(headers)}")
+            
+            response = session.post(
+                self.login_url, 
+                headers=headers, 
+                verify=False,
+                timeout=30,
+                allow_redirects=True
+            )
             response.raise_for_status()
 
             # Extract JSESSIONID
@@ -1146,7 +1181,7 @@ def main():
     parser = argparse.ArgumentParser(description="OpenAPI MCP Server")
     parser.add_argument("--transport", default="stdio", choices=["stdio", "http", "both"])
     parser.add_argument("--host", default=getattr(config, 'MCP_HOST', 'localhost'))
-    parser.add_argument("--port", type=int, default=getattr(config, 'MCP_PORT', 8080))
+    parser.add_argument("--port", type=int, default=getattr(config, 'MCP_PORT', 9000))
     parser.add_argument("--username", help="Username for authentication")
     parser.add_argument("--password", help="Password for authentication")
     parser.add_argument("--api-key-name", help="API key header name")

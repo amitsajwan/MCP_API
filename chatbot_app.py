@@ -118,7 +118,7 @@ async def startup_event():
         logger.info("🌐 Connecting to HTTP MCP server...")
         
         # Create HTTP MCP client with new synchronous constructor
-        mcp_client = MCPClient(mcp_server_url=f"http://localhost:{getattr(config, 'MCP_PORT', 8000)}")
+        mcp_client = MCPClient(mcp_server_url=f"http://localhost:{getattr(config, 'MCP_PORT', 9000)}")
         mcp_client.connect()
         logger.info("✅ Connected to HTTP MCP server")
         
