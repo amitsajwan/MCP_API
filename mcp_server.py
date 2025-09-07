@@ -63,6 +63,13 @@ except ImportError:
     
     config = DefaultConfig()
 
+# Configure logging
+logging.basicConfig(
+    level=getattr(logging, config.LOG_LEVEL),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("mcp_server")
+
 # Import argument validator
 try:
     from argument_validator import ArgumentValidator, ValidationResult
@@ -70,14 +77,6 @@ except ImportError:
     logger.warning("ArgumentValidator not available - validation disabled")
     ArgumentValidator = None
     ValidationResult = None
-
-
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, config.LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("mcp_server")
 
 
 @dataclass

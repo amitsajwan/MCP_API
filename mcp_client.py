@@ -18,7 +18,12 @@ from dataclasses import dataclass
 
 from openai import AsyncAzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from tool_categorizer import DynamicToolCategorizer
+
+# Import tool categorizer (optional)
+try:
+    from tool_categorizer import DynamicToolCategorizer
+except ImportError:
+    DynamicToolCategorizer = None
 
 # Tool type definition
 @dataclass
@@ -97,8 +102,8 @@ class MCPClient:
         # Cache for tools and results
         self.tool_results: Dict[str, Any] = {}
         
-        # Initialize dynamic tool categorizer
-        self.tool_categorizer = DynamicToolCategorizer()
+        # Initialize dynamic tool categorizer (if available)
+        self.tool_categorizer = DynamicToolCategorizer() if DynamicToolCategorizer else None
         
 
     
