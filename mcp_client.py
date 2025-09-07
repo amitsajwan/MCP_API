@@ -504,6 +504,64 @@ Guidelines:
                 results.append(ToolResult(tool_name=tc.tool_name, success=False, result=None, error=str(e)))
         return results
 
+    def _build_enhanced_tools_description(self) -> str:
+        """Build enhanced description of available tools with schema info."""
+        descriptions = []
+        
+        for tool in self.available_tools:
+            desc_parts = [f"🔧 {tool.name}"]
+            desc_parts.append(f"   Description: {tool.description}")
+            
+            # Add schema information
+            schema = tool.inputSchema or {}
+            properties = schema.get('properties', {})
+            required = schema.get('required', [])
+            
+            if properties:
+                desc_parts.append("   Parameters:")
+                for prop_name, prop_info in list(properties.items())[:3]:  # Limit for brevity
+                    prop_type = prop_info.get('type', 'any')
+                    prop_desc = prop_info.get('description', '')
+                    is_required = prop_name in required
+                    req_indicator = "*" if is_required else ""
+                    desc_parts.append(f"     - {prop_name}{req_indicator}: {prop_type} - {prop_desc}")
+                
+                if len(properties) > 3:
+                    desc_parts.append(f"     ... and {len(properties) - 3} more parameters")
+            
+            descriptions.append("\n".join(desc_parts))
+        
+        return "\n\n".join(descriptions)
+
+    def _plan_authentication_tools(self, user_query: str) -> List[ToolCall]:
+        """Plan authentication-related tool calls."""
+        auth_tools = []
+        
+        # Look for authentication tools
+        for tool in self.available_tools:
+            if any(keyword in tool.name.lower() for keyword in ['login', 'auth', 'credential']):
+                auth_tools.append(
+                    ToolCall(
+                        tool_name=tool.name,
+                        arguments={},
+                        reason=f"Authentication tool for query: {user_query}"
+                    )
+                )
+        
+        # If no specific auth tools, try perform_login
+        if not auth_tools:
+            login_tool = next((t for t in self.available_tools if t.name == 'perform_login'), None)
+            if login_tool:
+                auth_tools.append(
+                    ToolCall(
+                        tool_name='perform_login',
+                        arguments={},
+                        reason="Standard login process"
+                    )
+                )
+        
+        return auth_tools
+
     def _generate_simple_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
         successful = [r for r in tool_results if r.success]
         failed = [r for r in tool_results if not r.success]
