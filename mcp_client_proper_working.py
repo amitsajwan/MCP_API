@@ -93,10 +93,9 @@ class ProperMCPClient:
             
             # Create MCP client session with stdio transport
             from mcp.client.stdio import stdio_client
-            stdio_context = stdio_client(server_params)
-            read_stream, write_stream = await stdio_context.__aenter__()
+            self._stdio_context = stdio_client(server_params)
+            read_stream, write_stream = await self._stdio_context.__aenter__()
             self.session = ClientSession(read_stream, write_stream)
-            self._stdio_context = stdio_context
             
             # Initialize the session
             await self.session.initialize()
