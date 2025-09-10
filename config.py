@@ -19,6 +19,8 @@ class Config:
     MCP_HOST: str = os.getenv('MCP_HOST', 'localhost')
     MCP_PORT: int = int(os.getenv('MCP_PORT', '9000'))
     MCP_SERVER_ENDPOINT: str = os.getenv('MCP_SERVER_ENDPOINT', 'http://localhost:9000')
+    MCP_SERVER_SCRIPT: str = os.getenv('MCP_SERVER_SCRIPT', 'mcp_server.py')
+    MCP_SERVER_ARGS: list = os.getenv('MCP_SERVER_ARGS', '--transport stdio').split()
     
     # Chatbot Application Configuration
     CHATBOT_HOST: str = os.getenv('CHATBOT_HOST', '0.0.0.0')
