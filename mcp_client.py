@@ -1,33 +1,27 @@
 #!/usr/bin/env python3
 """
-MCP Client - Production HTTP-Only Implementation
-Optimized MCP client for production use:
-- HTTP-only communication with MCP server
-- Synchronous OpenAI client for better reliability
-- Preserved authentication and login logic
-- Streamlined tool execution flow
+MCP Client - Proper MCP Protocol Implementation
+Real MCP client using the official MCP protocol:
+- Uses MCP stdio transport for communication
+- Proper MCP tool discovery and calling
+- Native MCP authentication handling
+- Async/await throughout for proper MCP protocol
 """
 
 import logging
 import asyncio
 import json
 import os
-import requests
-from typing import Dict, Any, List, Optional
+import sys
+from typing import Dict, Any, List, Optional, Union
 from dataclasses import dataclass
 
 from openai import AsyncAzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
-# Optional tool categorizer (disabled by default; set to None to avoid import issues)
-DynamicToolCategorizer = None
-
-# Tool type definition
-@dataclass
-class Tool:
-    name: str
-    description: str
-    inputSchema: Dict[str, Any]
+# MCP Protocol imports
+from mcp import ClientSession, StdioServerParameters
+from mcp.types import Tool, TextContent, ImageContent, EmbeddedResource
 
 # Import config or create default
 try:
@@ -39,6 +33,7 @@ except ImportError:
         AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "")
         AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "gpt-4")
         MAX_TOOL_EXECUTIONS = 5
+        MCP_SERVER_COMMAND = ["python", "mcp_server.py", "--transport", "stdio"]
         
         def validate(self):
             return True
@@ -69,6 +64,7 @@ class ToolResult:
     success: bool
     result: Any
     error: Optional[str] = None
+    execution_time: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
         """Return a JSON-serializable dict representation of the result."""
@@ -77,38 +73,34 @@ class ToolResult:
             "success": self.success,
             "result": self.result,
             "error": self.error,
+            "execution_time": self.execution_time,
         }
 
 
 class MCPClient:
-    """Production MCP Client with HTTP-only communication"""
+    """Proper MCP Client using the official MCP protocol"""
     
-    def __init__(self, mcp_server_url: str = "http://localhost:9000", 
-                 openai_api_key: str = None, 
+    def __init__(self, server_command: List[str] = None, 
                  openai_model: str = "gpt-4o"):
-            self.server_url = mcp_server_url
-            self.available_tools: List[Tool] = []
-            self.session = requests.Session()
-            
-            # Lazy init OpenAI client - only create when needed
-            self.openai_client = None
-            self.model = openai_model
-            
-            logging.info(f"Initialized MCP Client connecting to {mcp_server_url}")
+        self.server_command = server_command or getattr(config, 'MCP_SERVER_COMMAND', ["python", "mcp_server.py", "--transport", "stdio"])
+        self.available_tools: List[Tool] = []
+        self.session: Optional[ClientSession] = None
+        
+        # Lazy init OpenAI client - only create when needed
+        self.openai_client = None
+        self.model = openai_model
+        
+        logger.info(f"Initialized MCP Client with server command: {' '.join(self.server_command)}")
 
-            # Cache for tools and results
-            self.tool_results = {}
-
-            # Initialize dynamic tool categorizer (if available)
-            self.tool_categorizer = DynamicToolCategorizer() if DynamicToolCategorizer else None
+        # Cache for tools and results
+        self.tool_results = {}
+        self.connected = False
         
 
-    
     def _create_openai_client(self) -> AsyncAzureOpenAI:
         """Create Azure OpenAI client with azure_ad_token_provider."""
         azure_endpoint = getattr(config, 'AZURE_OPENAI_ENDPOINT', os.getenv("AZURE_OPENAI_ENDPOINT"))
         
-        # Assume GPT-4o client is available - no fallback
         try:
             # Create Azure AD token provider
             credential = DefaultAzureCredential()
@@ -121,86 +113,124 @@ class MCPClient:
                 azure_ad_token_provider=token_provider,
                 api_version="2024-02-01"
             )
-            logging.info("✅ Azure OpenAI client created with Azure AD authentication")
+            logger.info("✅ Azure OpenAI client created with Azure AD authentication")
             return client
         except Exception as e:
-            logging.error(f"Failed to create Azure OpenAI client: {e}")
+            logger.error(f"Failed to create Azure OpenAI client: {e}")
             raise e
     
-
+    async def connect(self) -> bool:
+        """Connect to MCP server using proper MCP protocol."""
+        try:
+            if self.connected:
+                logger.info("Already connected to MCP server")
+                return True
+                
+            # Create server parameters for stdio transport
+            server_params = StdioServerParameters(
+                command=self.server_command[0],
+                args=self.server_command[1:] if len(self.server_command) > 1 else []
+            )
+            
+            # Create MCP client session
+            self.session = ClientSession(server_params)
+            
+            # Initialize the session
+            await self.session.initialize()
+            
+            # Load available tools
+            await self._load_tools()
+            
+            self.connected = True
+            logger.info(f"✅ Connected to MCP server with {len(self.available_tools)} tools")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to connect to MCP server: {e}")
+            self.connected = False
+            return False
     
-    def connect(self):
-         """Connect to MCP server via HTTP."""
-         try:
-             response = self.session.get(f"{self.server_url}/health")
-             if response.status_code == 200:
-                 logging.info(f"✅ Connected to HTTP MCP server at {self.server_url}")
-                 return True
-             else:
-                 raise Exception(f"Server health check failed: {response.status_code}")
-         except Exception as e:
-             logging.error(f"❌ Failed to connect to HTTP MCP server: {e}")
-             return False
+    async def disconnect(self):
+        """Disconnect from the MCP server."""
+        try:
+            if self.session:
+                await self.session.close()
+            self.connected = False
+            logger.info("Disconnected from MCP server")
+        except Exception as e:
+            logger.error(f"Error disconnecting from MCP server: {e}")
     
-    def disconnect(self):
-         """Disconnect from the HTTP MCP server."""
-         logging.info("Disconnected from HTTP MCP server")
-         if self.session:
-             self.session.close()
-    
-    def close(self):
+    async def close(self):
         """Close the MCP client connection. Alias for disconnect."""
-        self.disconnect()
+        await self.disconnect()
     
-    def list_tools(self) -> List[Tool]:
-         """Get list of available tools from HTTP MCP server."""
-         try:
-             response = self.session.get(f"{self.server_url}/tools")
-             if response.status_code == 200:
-                 data = response.json()
-                 tools = []
-                 for tool_data in data.get("tools", []):
-                     tool = Tool(
-                         name=tool_data["name"],
-                         description=tool_data["description"],
-                         inputSchema=tool_data.get("inputSchema", {"type": "object"})
-                     )
-                     tools.append(tool)
-                 self.available_tools = tools
-                 logging.info(f"✅ Retrieved {len(tools)} tools from HTTP MCP server")
-                 return tools
-             else:
-                 raise Exception(f"HTTP {response.status_code}")
-         except Exception as e:
-             logging.error(f"Error listing tools: {e}")
-             return []
+    async def _load_tools(self) -> List[Tool]:
+        """Load available tools from MCP server."""
+        try:
+            if not self.session:
+                raise Exception("Not connected to MCP server")
+                
+            # Get tools from MCP server
+            tools_response = await self.session.list_tools()
+            tools = tools_response.tools
+            
+            self.available_tools = tools
+            logger.info(f"✅ Loaded {len(tools)} tools from MCP server")
+            return tools
+            
+        except Exception as e:
+            logger.error(f"Error loading tools: {e}")
+            return []
     
-    def call_tool(self, tool_name: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
-         """Call a tool on the MCP server."""
-         if arguments is None:
-             arguments = {}
-             
-         try:
-             logging.info(f"Calling tool: {tool_name} with arguments: {arguments}")
-             
-             payload = {"name": tool_name, "arguments": arguments}
-             response = self.session.post(f"{self.server_url}/call_tool", json=payload)
-             
-             if response.status_code == 200:
-                 result = response.json()
-                 return {"status": "success", "data": result}
-             else:
-                 return {"status": "error", "message": f"HTTP {response.status_code}: {response.text}"}
-                 
-         except Exception as e:
-             logging.error(f"Error calling tool {tool_name}: {e}")
-             return {"status": "error", "message": str(e)}
+    async def list_tools(self) -> List[Tool]:
+        """Get list of available tools from MCP server."""
+        if not self.connected:
+            await self.connect()
+        return self.available_tools
+    
+    async def call_tool(self, tool_name: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Call a tool on the MCP server using proper MCP protocol."""
+        if arguments is None:
+            arguments = {}
+            
+        try:
+            if not self.session:
+                raise Exception("Not connected to MCP server")
+                
+            logger.info(f"Calling MCP tool: {tool_name} with arguments: {arguments}")
+            
+            # Call tool using MCP protocol
+            result = await self.session.call_tool(tool_name, arguments)
+            
+            # Extract text content from MCP result
+            if result.content:
+                content_text = ""
+                for content_item in result.content:
+                    if isinstance(content_item, TextContent):
+                        content_text += content_item.text
+                    elif isinstance(content_item, ImageContent):
+                        content_text += f"[Image: {content_item.data}]"
+                    elif isinstance(content_item, EmbeddedResource):
+                        content_text += f"[Resource: {content_item.uri}]"
+                
+                # Try to parse as JSON if it looks like JSON
+                try:
+                    parsed_result = json.loads(content_text)
+                    return {"status": "success", "data": parsed_result}
+                except json.JSONDecodeError:
+                    return {"status": "success", "data": content_text}
+            else:
+                return {"status": "success", "data": None}
+                
+        except Exception as e:
+            logger.error(f"Error calling MCP tool {tool_name}: {e}")
+            return {"status": "error", "message": str(e)}
 
-    def perform_login(self) -> Dict[str, Any]:
+    async def perform_login(self) -> Dict[str, Any]:
         """Call the perform_login tool on the MCP server."""
         logger.info("Attempting to perform login via MCP server tool.")
         try:
-            result = self.call_tool("perform_login")
+            result = await self.call_tool("perform_login")
             if result.get("status") == "success":
                 logger.info("✅ Login tool call successful.")
                 return {"status": "success", "message": "Login successful"}
@@ -212,7 +242,7 @@ class MCPClient:
             logger.error(f"Exception when calling perform_login tool: {e}")
             return {"status": "error", "message": str(e)}
     
-    def set_credentials(self, username: str = None, password: str = None, api_key: str = None) -> Dict[str, Any]:
+    async def set_credentials(self, username: str = None, password: str = None, api_key: str = None) -> Dict[str, Any]:
         """Set credentials using the set_credentials tool."""
         credentials = {}
         if username:
@@ -222,7 +252,7 @@ class MCPClient:
         if api_key:
             credentials["api_key"] = api_key
             
-        return self.call_tool("set_credentials", credentials)
+        return await self.call_tool("set_credentials", credentials)
     
 
     
@@ -232,7 +262,7 @@ class MCPClient:
     async def plan_tool_execution(self, user_query: str) -> List[ToolCall]:
         """Enhanced tool execution planning with intelligent analysis."""
         if not self.available_tools:
-            self.list_tools()
+            await self.list_tools()
         
         # If no tools available, return empty plan
         if not self.available_tools:
@@ -243,8 +273,6 @@ class MCPClient:
         auth_keywords = ["login", "credential", "authenticate", "password", "username", "auth"]
         if any(keyword in user_query.lower() for keyword in auth_keywords):
             return self._plan_authentication_tools(user_query)
-        
-        # Assume OpenAI client is always available - no fallback planning needed
         
         # Build enhanced tools description for LLM
         tools_description = self._build_enhanced_tools_description()
@@ -484,24 +512,29 @@ Guidelines:
 
         return {"ok_calls": ok_calls}
 
-    def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
+    async def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
         """Execute a plan of tool calls and collect results."""
         results: List[ToolResult] = []
         for i, tc in enumerate(tool_calls, 1):
             logger.info(f"Executing tool {i}/{len(tool_calls)}: {tc.tool_name}")
             try:
-                raw = self.call_tool(tc.tool_name, tc.arguments)
+                import time
+                start_time = time.time()
+                raw = await self.call_tool(tc.tool_name, tc.arguments)
+                execution_time = time.time() - start_time
+                
                 results.append(
                     ToolResult(
                         tool_name=tc.tool_name,
                         success=raw.get("status") == "success",
                         result=raw.get("data") if raw.get("status") == "success" else None,
                         error=raw.get("message") if raw.get("status") == "error" else None,
+                        execution_time=execution_time,
                     )
                 )
             except Exception as e:
                 logger.error(f"Exception during tool execution: {e}")
-                results.append(ToolResult(tool_name=tc.tool_name, success=False, result=None, error=str(e)))
+                results.append(ToolResult(tool_name=tc.tool_name, success=False, result=None, error=str(e), execution_time=0.0))
         return results
 
     def _build_enhanced_tools_description(self) -> str:
@@ -583,10 +616,10 @@ Guidelines:
         """End-to-end: plan tools, execute, summarize, return structured data."""
         logger.info(f"Processing query: {user_query}")
         # Ensure connection and tool listing
-        if not self.connect():
+        if not await self.connect():
             return {"status": "error", "message": "Failed to connect to MCP server"}
         if not self.available_tools:
-            self.list_tools()
+            await self.list_tools()
 
         # Plan
         tool_calls = await self.plan_tool_execution(user_query)
@@ -606,7 +639,7 @@ Guidelines:
         ok_calls = arg_check["ok_calls"]
 
         # Execute
-        tool_results = self.execute_tool_plan(ok_calls)
+        tool_results = await self.execute_tool_plan(ok_calls)
 
         # Summarize
         try:
@@ -623,44 +656,43 @@ Guidelines:
         }
 
     
-def main():
-    """Example usage of MCP Client - HTTP only."""
-    print("MCP Client Test")
-    print("===============")
+async def main():
+    """Example usage of proper MCP Client."""
+    print("MCP Client Test - Proper MCP Protocol")
+    print("=====================================")
     print()
-    print("🔌 Using HTTP connection to MCP server")
-    print("📋 Make sure to start the MCP server first:")
-    print("   python mcp_server.py")
+    print("🔌 Using proper MCP protocol with stdio transport")
+    print("📋 The MCP server will be started automatically")
     print()
     
-    # Create HTTP-only client
+    # Create proper MCP client
     client = MCPClient()
     
     try:
-        print(f"\n🔗 Connecting to MCP server via HTTP...")
-        if not client.connect():
+        print(f"\n🔗 Connecting to MCP server via stdio...")
+        if not await client.connect():
             print("Failed to connect to MCP server")
             return
         
         print("📋 Listing available tools...")
-        tools = client.list_tools()
+        tools = await client.list_tools()
         print(f"Available tools: {[tool.name for tool in tools[:5]]}..." + (f" and {len(tools)-5} more" if len(tools) > 5 else ""))
         
         if tools:
             print("\n🧪 Testing tool execution...")
-            # Ensure we run the async process_query properly
-            result = asyncio.run(client.process_query("Show me pending payments"))
+            result = await client.process_query("Show me pending payments")
             print("Result:")
             print(json.dumps(result, indent=2))
         
     except Exception as e:
         logger.error(f"Error in main: {e}")
         print(f"❌ Error: {e}")
-        print("\n💡 Make sure the MCP server is running:")
-        print("   python mcp_server.py")
+        print("\n💡 Make sure the MCP server can be started with:")
+        print("   python mcp_server.py --transport stdio")
     finally:
-        print("\n👋 Disconnected from MCP server")
+        print("\n👋 Disconnecting from MCP server")
+        await client.disconnect()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
