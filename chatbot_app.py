@@ -38,7 +38,7 @@ except ImportError:
     
     config = DefaultConfig()
 
-from http_mcp_client import HTTPMCPClient
+from mcp_client_proper_working import ProperMCPClient
 
 
 # Configure logging
@@ -61,7 +61,7 @@ if getattr(config, 'ENABLE_CORS', True):
     )
 
 # Global MCP client
-mcp_client: Optional[HTTPMCPClient] = None
+mcp_client: Optional[ProperMCPClient] = None
 
 
 class WebSocketManager:
@@ -115,10 +115,10 @@ async def startup_event():
     global mcp_client
     try:
         logger.info("Starting chatbot application...")
-        logger.info("🌐 Connecting to HTTP MCP server...")
+        logger.info("🔌 Connecting to MCP server via stdio transport...")
         
-        # Create HTTP MCP client with proper async initialization
-        mcp_client = HTTPMCPClient()
+        # Create proper MCP client with stdio transport
+        mcp_client = ProperMCPClient()
         await mcp_client.connect()
         logger.info("✅ Connected to MCP server")
         

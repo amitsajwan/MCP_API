@@ -1,9 +1,12 @@
-# FastMCP 2.0 Requirements
+# MCP Chatbot System Requirements
 # Core MCP and FastAPI
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 websockets>=11.0
 mcp>=1.0.0
+
+# HTTP client for MCP server communication
+aiohttp>=3.8.0
 
 # Azure OpenAI and Authentication  
 openai>=1.0.0
