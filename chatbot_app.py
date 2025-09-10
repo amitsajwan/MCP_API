@@ -38,7 +38,7 @@ except ImportError:
     
     config = DefaultConfig()
 
-from mcp_client import MCPClient
+from http_mcp_client import HTTPMCPClient
 
 
 # Configure logging
@@ -61,7 +61,7 @@ if getattr(config, 'ENABLE_CORS', True):
     )
 
 # Global MCP client
-mcp_client: Optional[MCPClient] = None
+mcp_client: Optional[HTTPMCPClient] = None
 
 
 class WebSocketManager:
@@ -117,10 +117,10 @@ async def startup_event():
         logger.info("Starting chatbot application...")
         logger.info("🌐 Connecting to HTTP MCP server...")
         
-        # Create HTTP MCP client with new synchronous constructor
-        mcp_client = MCPClient(mcp_server_url=f"http://localhost:{getattr(config, 'MCP_PORT', 9000)}")
-        mcp_client.connect()
-        logger.info("✅ Connected to HTTP MCP server")
+        # Create HTTP MCP client with proper async initialization
+        mcp_client = HTTPMCPClient()
+        await mcp_client.connect()
+        logger.info("✅ Connected to MCP server")
         
         logger.info("MCP client initialized successfully")
         logger.info(f"Chatbot server starting on {config.get_chatbot_url()}")
@@ -136,7 +136,7 @@ async def shutdown_event():
     global mcp_client
     if mcp_client:
         try:
-            mcp_client.disconnect()
+            await mcp_client.disconnect()
             logger.info("MCP client cleaned up")
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
@@ -296,7 +296,7 @@ async def list_tools():
     
     try:
         # Use MCP client to list tools
-        tools = mcp_client.list_tools()
+        tools = await mcp_client.list_tools()
         tools_info = []
         for tool in tools:
             tools_info.append({
@@ -325,7 +325,7 @@ async def set_credentials(credentials: CredentialsRequest):
     
     try:
         # Use MCP client to set credentials
-        result = mcp_client.set_credentials(
+        result = await mcp_client.set_credentials(
             username=credentials.username,
             password=credentials.password,
             api_key=getattr(config, 'DEFAULT_API_KEY_VALUE', None)
@@ -349,7 +349,7 @@ async def login():
     
     try:
         # Use MCP client to perform login
-        result = mcp_client.perform_login()
+        result = await mcp_client.perform_login()
         if result.get("status") == "success":
             return {"status": "success", "message": "Login successful"}
         else:
