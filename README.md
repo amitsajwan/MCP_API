@@ -298,17 +298,14 @@ Current Holdings:
 ```
 MCP_API/
 ├── 🚀 Enhanced Core Components
-│   ├── enhanced_schema_processor.py    # Enterprise OpenAPI processing
-│   ├── context_aware_response_generator.py  # Modern AI responses
-│   ├── enhanced_mcp_client.py         # Intelligent orchestration
-│   └── demo_enhanced_system.py        # Complete system demo
+│   └── test_stdio_system.py           # System test suite
 │
 ├── 🏗️ Core System
 │   ├── mcp_server.py                  # HTTP MCP Server (Port 9000)
-│   ├── mcp_client.py                  # MCP Client with GPT-4 integration
+│   ├── mcp_client_proper_working.py   # MCP Client with stdio transport
 │   ├── chatbot_app.py                 # Web interface (Port 9099)
 │   ├── config.py                      # Configuration management
-│   └── launcher.py                    # Unified startup script
+│   └── stdio_launcher.py             # Stdio-based startup script
 │
 ├── 📋 Configuration & Setup
 │   ├── .env.example                   # Environment template
