@@ -120,7 +120,7 @@ async def startup_event():
         # Create proper MCP client with stdio transport
         mcp_client = ProperMCPClient()
         await mcp_client.connect()
-        logger.info("✅ Connected to MCP server")
+        logger.info("✅ Connected to MCP server via stdio transport")
         
         logger.info("MCP client initialized successfully")
         logger.info(f"Chatbot server starting on {config.get_chatbot_url()}")

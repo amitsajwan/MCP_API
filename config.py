@@ -75,6 +75,11 @@ class Config:
     MAX_TOOL_EXECUTIONS: int = int(os.getenv('MAX_TOOL_EXECUTIONS', '5'))
     REQUEST_TIMEOUT: int = int(os.getenv('REQUEST_TIMEOUT', '30'))
     
+    # Response Management Configuration
+    MAX_RESPONSE_SIZE: int = int(os.getenv('MAX_RESPONSE_SIZE', '5000'))  # Max tokens for LLM context
+    MAX_RETRIES: int = int(os.getenv('MAX_RETRIES', '3'))
+    RETRY_DELAY: float = float(os.getenv('RETRY_DELAY', '1.0'))
+    
     @classmethod
     def validate(cls) -> bool:
         """Validate configuration and warn if required Azure settings are missing.

@@ -53,6 +53,8 @@ class ToolResult:
     result: Any
     error: Optional[str] = None
     execution_time: float = 0.0
+    response_size: int = 0
+    paginated: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -61,6 +63,8 @@ class ToolResult:
             "result": self.result,
             "error": self.error,
             "execution_time": self.execution_time,
+            "response_size": self.response_size,
+            "paginated": self.paginated,
         }
 
 class ProperMCPClient:
@@ -75,6 +79,11 @@ class ProperMCPClient:
         self.session: Optional[ClientSession] = None
         self.connected = False
         self._stdio_context = None
+        
+        # Enhanced configuration
+        self.max_response_size = getattr(config, 'MAX_RESPONSE_SIZE', 5000)
+        self.max_retries = getattr(config, 'MAX_RETRIES', 3)
+        self.retry_delay = getattr(config, 'RETRY_DELAY', 1.0)
         
         logger.info(f"Initialized Proper MCP Client with server command: {' '.join(self.server_command)}")
     
@@ -147,46 +156,123 @@ class ProperMCPClient:
             await self.connect()
         return self.available_tools
     
+    def _estimate_response_size(self, data: Any) -> int:
+        """Estimate the size of a response in tokens (rough approximation)."""
+        if isinstance(data, str):
+            return len(data.split())
+        elif isinstance(data, dict):
+            return sum(self._estimate_response_size(v) for v in data.values())
+        elif isinstance(data, list):
+            return sum(self._estimate_response_size(item) for item in data)
+        else:
+            return len(str(data).split())
+    
+    def _truncate_response(self, data: Any, max_size: int) -> Dict[str, Any]:
+        """Truncate response data to fit within size limits."""
+        if isinstance(data, dict):
+            truncated = {}
+            current_size = 0
+            
+            for key, value in data.items():
+                value_size = self._estimate_response_size(value)
+                if current_size + value_size > max_size:
+                    truncated[f"{key}_truncated"] = f"... (truncated, {value_size} tokens)"
+                    break
+                truncated[key] = value
+                current_size += value_size
+            
+            return truncated
+        elif isinstance(data, list):
+            truncated = []
+            current_size = 0
+            
+            for item in data:
+                item_size = self._estimate_response_size(item)
+                if current_size + item_size > max_size:
+                    truncated.append(f"... (truncated, {len(data) - len(truncated)} more items)")
+                    break
+                truncated.append(item)
+                current_size += item_size
+            
+            return truncated
+        else:
+            data_str = str(data)
+            if len(data_str.split()) > max_size:
+                words = data_str.split()
+                truncated_words = words[:max_size]
+                return " ".join(truncated_words) + f"... (truncated, {len(words) - max_size} more words)"
+            return data
+
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Call a tool on the MCP server using proper MCP protocol."""
+        """Call a tool on the MCP server using proper MCP protocol with pagination handling."""
         if arguments is None:
             arguments = {}
             
-        try:
-            if not self.session:
-                raise Exception("Not connected to MCP server")
+        for attempt in range(self.max_retries):
+            try:
+                if not self.session:
+                    raise Exception("Not connected to MCP server")
+                    
+                logger.info(f"Calling MCP tool: {tool_name} with arguments: {arguments} (attempt {attempt + 1})")
                 
-            logger.info(f"Calling MCP tool: {tool_name} with arguments: {arguments}")
-            
-            # Call tool using MCP protocol
-            result = await self.session.call_tool(tool_name, arguments)
-            
-            # Extract text content from MCP result
-            if result.content:
-                content_text = ""
-                for content_item in result.content:
-                    if isinstance(content_item, TextContent):
-                        content_text += content_item.text
-                    elif isinstance(content_item, ImageContent):
-                        content_text += f"[Image: {content_item.data}]"
-                    elif isinstance(content_item, EmbeddedResource):
-                        content_text += f"[Resource: {content_item.uri}]"
+                # Call tool using MCP protocol
+                result = await self.session.call_tool(tool_name, arguments)
                 
-                # Try to parse as JSON if it looks like JSON
-                try:
-                    parsed_result = json.loads(content_text)
-                    return {"status": "success", "data": parsed_result}
-                except json.JSONDecodeError:
-                    return {"status": "success", "data": content_text}
-            else:
-                return {"status": "success", "data": None}
-                
-        except Exception as e:
-            logger.error(f"Error calling MCP tool {tool_name}: {e}")
-            return {"status": "error", "message": str(e)}
+                # Extract text content from MCP result
+                if result.content:
+                    content_text = ""
+                    for content_item in result.content:
+                        if isinstance(content_item, TextContent):
+                            content_text += content_item.text
+                        elif isinstance(content_item, ImageContent):
+                            content_text += f"[Image: {content_item.data}]"
+                        elif isinstance(content_item, EmbeddedResource):
+                            content_text += f"[Resource: {content_item.uri}]"
+                    
+                    # Try to parse as JSON if it looks like JSON
+                    try:
+                        parsed_result = json.loads(content_text)
+                        
+                        # Check response size and truncate if necessary
+                        response_size = self._estimate_response_size(parsed_result)
+                        if response_size > self.max_response_size:
+                            logger.warning(f"Response size ({response_size} tokens) exceeds limit ({self.max_response_size} tokens), truncating...")
+                            parsed_result = self._truncate_response(parsed_result, self.max_response_size)
+                            parsed_result["_truncated"] = True
+                            parsed_result["_original_size"] = response_size
+                        
+                        return {
+                            "status": "success", 
+                            "data": parsed_result,
+                            "response_size": response_size,
+                            "truncated": response_size > self.max_response_size
+                        }
+                    except json.JSONDecodeError:
+                        # Handle non-JSON responses
+                        response_size = self._estimate_response_size(content_text)
+                        if response_size > self.max_response_size:
+                            logger.warning(f"Response size ({response_size} tokens) exceeds limit ({self.max_response_size} tokens), truncating...")
+                            content_text = self._truncate_response(content_text, self.max_response_size)
+                        
+                        return {
+                            "status": "success", 
+                            "data": content_text,
+                            "response_size": response_size,
+                            "truncated": response_size > self.max_response_size
+                        }
+                else:
+                    return {"status": "success", "data": None, "response_size": 0, "truncated": False}
+                    
+            except Exception as e:
+                logger.warning(f"Tool call attempt {attempt + 1} failed: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+                else:
+                    logger.error(f"Error calling MCP tool {tool_name} after {self.max_retries} attempts: {e}")
+                    return {"status": "error", "message": str(e), "response_size": 0, "truncated": False}
     
     async def execute_tool_plan(self, tool_calls: List[ToolCall]) -> List[ToolResult]:
-        """Execute a plan of tool calls and collect results."""
+        """Execute a plan of tool calls and collect results with enhanced monitoring."""
         results: List[ToolResult] = []
         for i, tc in enumerate(tool_calls, 1):
             logger.info(f"Executing tool {i}/{len(tool_calls)}: {tc.tool_name}")
@@ -203,11 +289,21 @@ class ProperMCPClient:
                         result=raw.get("data") if raw.get("status") == "success" else None,
                         error=raw.get("message") if raw.get("status") == "error" else None,
                         execution_time=execution_time,
+                        response_size=raw.get("response_size", 0),
+                        paginated=raw.get("truncated", False)
                     )
                 )
             except Exception as e:
                 logger.error(f"Exception during tool execution: {e}")
-                results.append(ToolResult(tool_name=tc.tool_name, success=False, result=None, error=str(e), execution_time=0.0))
+                results.append(ToolResult(
+                    tool_name=tc.tool_name, 
+                    success=False, 
+                    result=None, 
+                    error=str(e), 
+                    execution_time=0.0,
+                    response_size=0,
+                    paginated=False
+                ))
         return results
     
     def _build_tools_description(self) -> str:
@@ -313,16 +409,22 @@ class ProperMCPClient:
         return tool_calls
     
     def _generate_summary(self, user_query: str, tool_results: List[ToolResult], tool_calls: List[ToolCall]) -> str:
-        """Generate a summary of the results."""
+        """Generate a summary of the results with pagination information."""
         successful = [r for r in tool_results if r.success]
         failed = [r for r in tool_results if not r.success]
+        total_size = sum(getattr(r, 'response_size', 0) for r in tool_results)
+        truncated_count = sum(1 for r in tool_results if getattr(r, 'truncated', False))
         
         parts = [f"Query: {user_query}", ""]
         
         if successful:
             parts.append("✅ Successfully executed:")
             for r in successful:
+                response_size = getattr(r, 'response_size', 0)
+                truncated = getattr(r, 'truncated', False)
                 parts.append(f"- {r.tool_name}")
+                if truncated:
+                    parts.append(f"  ⚠️ Response was truncated due to size limits")
                 if r.result:
                     # Add key insights from the data
                     if isinstance(r.result, dict):
@@ -344,7 +446,12 @@ class ProperMCPClient:
                 parts.append(f"- {r.tool_name}: {r.error}")
             parts.append("")
         
-        parts.append(f"Total: {len(successful)} successful, {len(failed)} failed")
+        # Add performance summary
+        parts.append(f"📊 Performance Summary:")
+        parts.append(f"   Total response size: {total_size} tokens")
+        parts.append(f"   Truncated responses: {truncated_count}")
+        parts.append(f"   Success rate: {len(successful)}/{len(tool_results)} ({len(successful)/len(tool_results)*100:.1f}%)")
+        
         return "\n".join(parts)
 
     async def set_credentials(self, username: str = None, password: str = None, api_key: str = None) -> Dict[str, Any]:
