@@ -46,6 +46,15 @@ class FastMCPChatbotClient:
         
         logger.info(f"Initialized FastMCP Chatbot Client for server: {server_script}")
     
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.connect()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.disconnect()
+    
     async def connect(self) -> bool:
         """Connect to the FastMCP chatbot server."""
         try:
@@ -348,53 +357,46 @@ async def main():
     print("=========================================")
     print()
     
-    # Create client
-    client = FastMCPChatbotClient()
-    
     try:
-        print("🔗 Connecting to FastMCP chatbot server...")
-        if not await client.connect():
-            print("❌ Failed to connect to FastMCP server")
-            return
-        
-        print("✅ Connected successfully!")
-        print(f"📋 Available tools: {client.get_available_tools()}")
-        print()
-        
-        # Interactive chat loop
-        print("💬 Starting interactive chat (type 'quit' to exit)")
-        print("-" * 50)
-        
-        while True:
-            try:
-                user_input = input("\nYou: ").strip()
-                
-                if user_input.lower() in ['quit', 'exit', 'bye']:
-                    print("👋 Goodbye!")
+        # Use async context manager for automatic connection/disconnection
+        async with FastMCPChatbotClient() as client:
+            print("✅ Connected to FastMCP chatbot server successfully!")
+            print(f"📋 Available tools: {client.get_available_tools()}")
+            print()
+            
+            # Interactive chat loop
+            print("💬 Starting interactive chat (type 'quit' to exit)")
+            print("-" * 50)
+            
+            while True:
+                try:
+                    user_input = input("\nYou: ").strip()
+                    
+                    if user_input.lower() in ['quit', 'exit', 'bye']:
+                        print("👋 Goodbye!")
+                        break
+                    
+                    if not user_input:
+                        continue
+                    
+                    print("🤖 Assistant: ", end="", flush=True)
+                    response = await client.chat(user_input)
+                    print(response)
+                    
+                except KeyboardInterrupt:
+                    print("\n👋 Goodbye!")
                     break
-                
-                if not user_input:
-                    continue
-                
-                print("🤖 Assistant: ", end="", flush=True)
-                response = await client.chat(user_input)
-                print(response)
-                
-            except KeyboardInterrupt:
-                print("\n👋 Goodbye!")
-                break
-            except Exception as e:
-                print(f"❌ Error: {e}")
+                except Exception as e:
+                    print(f"❌ Error: {e}")
+            
+            # Show conversation summary
+            print(f"\n📊 {client.get_conversation_summary()}")
         
-        # Show conversation summary
-        print(f"\n📊 {client.get_conversation_summary()}")
+        print("\n👋 Automatically disconnected from FastMCP server")
         
     except Exception as e:
         logger.error(f"Error in main: {e}")
         print(f"❌ Error: {e}")
-    finally:
-        print("\n🔌 Disconnecting from FastMCP server...")
-        await client.disconnect()
 
 if __name__ == "__main__":
     asyncio.run(main())
