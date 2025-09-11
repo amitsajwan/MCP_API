@@ -139,7 +139,7 @@ async def run_chat(mcp_cmd: str, user_query: str):
                 continue  # Loop to let LLM decide next step
 
             # Final response
-            content = choice.message.get("content", "")
+            content = choice.message.content or ""
             print(f"\n🤖 Assistant: {content}\n")
             break
 

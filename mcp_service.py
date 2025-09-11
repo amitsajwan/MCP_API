@@ -165,7 +165,7 @@ class ModernLLMService:
             capabilities = self._analyze_capabilities(tool_calls, user_message)
             
             return {
-                "response": choice.message.get("content", ""),
+                "response": choice.message.content or "",
                 "tool_calls": tool_calls,
                 "conversation": messages[1:],
                 "capabilities": capabilities
