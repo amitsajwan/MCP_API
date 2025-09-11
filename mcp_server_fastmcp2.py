@@ -753,7 +753,10 @@ class FastMCP2Server:
             if self.api_key_name and self.api_key_value:
                 headers[self.api_key_name] = self.api_key_value
 
-            logger.info(f"Attempting login to {self.login_url}")
+            logger.info(f"🌐 [MCP_SERVER] Attempting login to {self.login_url}")
+            logger.info(f"🔐 [MCP_SERVER] Login headers: {list(headers.keys())}")
+            logger.info(f"👤 [MCP_SERVER] Username: {self.username}")
+            logger.info(f"🔑 [MCP_SERVER] API Key: {self.api_key_name if self.api_key_name else 'None'}")
             
             response = session.post(
                 self.login_url, 
@@ -762,27 +765,34 @@ class FastMCP2Server:
                 timeout=30,
                 allow_redirects=True
             )
+            
+            logger.info(f"📡 [MCP_SERVER] Login response status: {response.status_code}")
+            logger.info(f"📡 [MCP_SERVER] Login response headers: {list(response.headers.keys())}")
+            
             response.raise_for_status()
 
             # Extract JSESSIONID
             token = None
             if "set-cookie" in response.headers:
+                logger.info(f"🍪 [MCP_SERVER] Set-Cookie header: {response.headers.get('set-cookie', '')}")
                 match = re.search(r'JSESSIONID=([^;]+)', response.headers.get("set-cookie", ""))
                 if match:
                     token = match.group(1)
+                    logger.info(f"🍪 [MCP_SERVER] Extracted JSESSIONID: {token[:20]}...")
 
             if token:
-                logger.info("✅ Authentication successful")
+                logger.info("✅ [MCP_SERVER] Authentication successful")
                 for spec_key in list(self.api_specs.keys()):
                     self.sessions[spec_key] = session
                 self.session_id = token
                 return True
             else:
-                logger.error("No JSESSIONID found in login response")
+                logger.error("❌ [MCP_SERVER] No JSESSIONID found in login response")
+                logger.error(f"❌ [MCP_SERVER] Response text: {response.text[:500]}")
                 return False
 
         except Exception as e:
-            logger.error(f"Authentication failed: {e}")
+            logger.error(f"❌ [MCP_SERVER] Authentication failed: {e}")
             return False
     
     def _get_basic_auth_header(self, username: str, password: str) -> str:
