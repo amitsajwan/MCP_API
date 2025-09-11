@@ -34,7 +34,7 @@ Financial APIs (Cash, Securities, Mailbox, etc.)
 - Uses MCP client to process user queries
 - Real-time communication via WebSocket
 
-### 4. System Launcher (`launcher_proper.py`)
+### 4. System Launcher (`stdio_launcher.py`)
 - Starts the complete system
 - Manages MCP server and chatbot app processes
 - Provides system monitoring and graceful shutdown
@@ -48,7 +48,7 @@ pip install -r requirements.txt
 
 ### 2. Start the Complete System
 ```bash
-python launcher_proper.py
+python stdio_launcher.py
 ```
 
 This will start:

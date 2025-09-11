@@ -1257,7 +1257,7 @@ def main():
                     
                     # Also prepare for stdio (but don't block on it)
                     logger.info("🔌 Server ready for MCP stdio connections")
-                    logger.info("💡 To connect via MCP: python mcp_client.py --connect stdio")
+                    logger.info("💡 To connect via MCP: python mcp_client_proper_working.py")
                     
                     try:
                         # Keep HTTP server running
