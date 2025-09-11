@@ -39,7 +39,7 @@ class FastMCPChatbotClient:
     def __init__(self, server_script: str = "fastmcp_chatbot_server.py"):
         self.server_script = server_script
         self.client: Optional[Client] = None
-        self.server_process: Optional[subprocess.Popen] = None
+        self.client_context = None
         self.connected = False
         self.available_tools: List[Dict[str, Any]] = []
         self.conversation_history: List[ChatMessage] = []
@@ -49,11 +49,23 @@ class FastMCPChatbotClient:
     async def __aenter__(self):
         """Async context manager entry."""
         await self.connect()
+        if self.client:
+            # Enter the FastMCP client's async context manager
+            self.client_context = self.client.__aenter__()
+            await self.client_context
+            # Load available tools
+            await self._load_tools()
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
-        await self.disconnect()
+        try:
+            if self.client_context:
+                await self.client.__aexit__(exc_type, exc_val, exc_tb)
+        except Exception as e:
+            logger.error(f"Error exiting FastMCP client context: {e}")
+        finally:
+            self.connected = False
     
     async def connect(self) -> bool:
         """Connect to the FastMCP chatbot server."""
@@ -62,38 +74,37 @@ class FastMCPChatbotClient:
                 logger.info("Already connected to FastMCP server")
                 return True
             
-            # Start the server process
-            self.server_process = subprocess.Popen(
-                [sys.executable, self.server_script, "--transport", "stdio"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+            # Create FastMCP client with stdio transport
+            from fastmcp import Client
+            from fastmcp.client.transports import StdioTransport
+            
+            # Create stdio transport
+            transport = StdioTransport(
+                command=sys.executable,
+                args=[self.server_script, "--transport", "stdio"],
+                env=os.environ.copy()
             )
             
-            # Create FastMCP client with stdio transport
-            from fastmcp import FastMCP
-            server = FastMCP("test-server")
-            self.client = Client(transport=server)
+            # Create client with stdio transport
+            self.client = Client(transport=transport)
             
-            # Load available tools
-            await self._load_tools()
-            
+            # FastMCP 2.0 Client uses async context manager, so we need to enter it
+            # This will be handled by the __aenter__ method
             self.connected = True
-            logger.info(f"✅ Connected to FastMCP chatbot server with {len(self.available_tools)} tools")
+            logger.info(f"✅ FastMCP chatbot client created with stdio transport")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Failed to connect to FastMCP server: {e}")
+            logger.error(f"❌ Failed to create FastMCP client: {e}")
             self.connected = False
             return False
     
     async def disconnect(self):
         """Disconnect from the FastMCP server."""
         try:
-            if self.server_process:
-                self.server_process.terminate()
-                self.server_process.wait(timeout=5)
+            if self.client_context:
+                await self.client.__aexit__(None, None, None)
+                self.client_context = None
             
             self.connected = False
             logger.info("Disconnected from FastMCP server")
@@ -108,7 +119,12 @@ class FastMCPChatbotClient:
             
             # Get tools from FastMCP server
             tools_response = await self.client.list_tools()
-            self.available_tools = tools_response.get('tools', [])
+            
+            # FastMCP 2.0 returns a list of tools directly, not a dict
+            if isinstance(tools_response, list):
+                self.available_tools = [tool.model_dump() if hasattr(tool, 'model_dump') else (tool.dict() if hasattr(tool, 'dict') else tool) for tool in tools_response]
+            else:
+                self.available_tools = tools_response.get('tools', []) if isinstance(tools_response, dict) else []
             
             logger.info(f"✅ Loaded {len(self.available_tools)} tools from FastMCP server")
             return self.available_tools
@@ -131,11 +147,11 @@ class FastMCPChatbotClient:
             # Call tool using FastMCP 2.0 protocol
             result = await self.client.call_tool(tool_name, arguments)
             
-            # Extract content from FastMCP result
-            if isinstance(result, dict) and 'content' in result:
-                content_text = result['content']
-            elif isinstance(result, str):
+            # FastMCP 2.0 returns the result directly, not wrapped in a dict
+            if isinstance(result, str):
                 content_text = result
+            elif isinstance(result, dict):
+                content_text = result.get('content', str(result))
             else:
                 content_text = str(result)
             
@@ -150,7 +166,7 @@ class FastMCPChatbotClient:
             except json.JSONDecodeError:
                 return {
                     "status": "success",
-                    "data": content_text,
+                    "data": {"message": content_text},
                     "raw_content": content_text
                 }
                 
