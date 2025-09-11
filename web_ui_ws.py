@@ -35,8 +35,8 @@ def handle_connect(auth=None):
                      bool(os.getenv('API_KEY_NAME') and os.getenv('API_KEY_VALUE'))
     
     # Initialize MCP service if not already done
-    if not mcp_service._mcp_client:
-        asyncio.create_task(initialize_mcp_service())
+    # Note: MCP service initialization is handled separately
+    pass
     
     # Send credentials status
     emit('credentials_status', {
@@ -74,8 +74,17 @@ def handle_message(data):
     # Emit user message to client
     emit('user_message', {'message': user_message})
     
-    # Process with modern LLM service
-    asyncio.create_task(process_message_async(session_id, user_message))
+    # Simple echo response for now (MCP service integration pending)
+    response = f"Echo: {user_message}"
+    
+    # Add bot response to conversation
+    conversations[session_id].append({
+        "role": "assistant",
+        "content": response
+    })
+    
+    # Emit bot response
+    emit('bot_message', {'message': response})
 
 async def initialize_mcp_service():
     """Initialize MCP service"""
@@ -132,12 +141,71 @@ async def process_message_async(session_id: str, user_message: str):
 @socketio.on('get_tools')
 def handle_get_tools():
     """Handle request for available tools"""
-    asyncio.create_task(get_tools_async())
+    # Return a simple list of available tools
+    tools = [
+        {
+            "function": {
+                "name": "cash_api_getPayments",
+                "description": "Get all cash payments with optional filtering"
+            }
+        },
+        {
+            "function": {
+                "name": "cash_api_createPayment", 
+                "description": "Create a new cash payment request"
+            }
+        },
+        {
+            "function": {
+                "name": "cls_api_getSettlements",
+                "description": "Get CLS settlement information"
+            }
+        },
+        {
+            "function": {
+                "name": "mailbox_api_getMessages",
+                "description": "Get mailbox messages with filtering"
+            }
+        },
+        {
+            "function": {
+                "name": "securities_api_getPositions",
+                "description": "Get securities positions"
+            }
+        }
+    ]
+    
+    emit('tools_list', {'tools': tools})
 
 @socketio.on('set_credentials')
 def handle_set_credentials(data):
     """Handle credential configuration"""
-    asyncio.create_task(set_credentials_async(data, request.sid))
+    try:
+        # Update environment variables
+        if data.get('username'):
+            os.environ['API_USERNAME'] = data['username']
+        if data.get('password'):
+            os.environ['API_PASSWORD'] = data['password']
+        if data.get('api_key_name'):
+            os.environ['API_KEY_NAME'] = data['api_key_name']
+        if data.get('api_key_value'):
+            os.environ['API_KEY_VALUE'] = data['api_key_value']
+        if data.get('login_url'):
+            os.environ['LOGIN_URL'] = data['login_url']
+        if data.get('base_url'):
+            os.environ['FORCE_BASE_URL'] = data['base_url']
+        
+        emit('credentials_status', {
+            'configured': True,
+            'message': 'Credentials saved successfully! (Note: MCP service integration pending)'
+        }, room=request.sid)
+        
+    except Exception as e:
+        logging.error(f"Error setting credentials: {e}")
+        emit('credentials_status', {
+            'configured': False,
+            'message': f'Error setting credentials: {str(e)}'
+        }, room=request.sid)
 
 async def set_credentials_async(credentials, session_id):
     """Set credentials asynchronously and perform login to get session ID"""
