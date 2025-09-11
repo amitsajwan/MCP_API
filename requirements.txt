@@ -23,6 +23,6 @@ pytest-asyncio>=0.21.0
 black>=23.0.0
 flake8>=6.0.0
 
-# Optional: For enhanced functionality
-# openai>=1.0.0  # Uncomment if you want OpenAI integration
-# azure-identity>=1.15.0  # Uncomment if you want Azure integration
+# Azure OpenAI integration
+openai>=1.0.0
+azure-identity>=1.15.0
