@@ -85,6 +85,15 @@ class FastMCPClientWrapper:
         
         logger.info(f"Initialized FastMCP 2.0 Client with server command: {' '.join(self.server_command)}")
     
+    async def __aenter__(self):
+        """Async context manager entry."""
+        await self.connect()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit."""
+        await self.disconnect()
+    
     async def connect(self) -> bool:
         """Connect to FastMCP server using stdio transport."""
         try:
@@ -474,33 +483,28 @@ async def main():
     print("🔌 Using FastMCP 2.0 protocol with stdio transport")
     print()
     
-    # Create FastMCP client
-    client = FastMCPClientWrapper()
-    
     try:
-        print(f"\n🔗 Connecting to FastMCP server via stdio...")
-        if not await client.connect():
-            print("Failed to connect to FastMCP server")
-            return
+        # Use async context manager for automatic connection/disconnection
+        async with FastMCPClientWrapper() as client:
+            print("✅ Connected to FastMCP server via stdio")
+            
+            print("📋 Listing available tools...")
+            tools = await client.list_tools()
+            print(f"Available tools: {[tool.get('name') for tool in tools]}")
+            
+            if tools:
+                print("\n🧪 Testing tool execution...")
+                result = await client.process_query("Show me my pending payments and cash summary")
+                print("\nResult:")
+                print("=" * 50)
+                print(result["summary"])
+                print("=" * 50)
         
-        print("📋 Listing available tools...")
-        tools = await client.list_tools()
-        print(f"Available tools: {[tool.get('name') for tool in tools]}")
-        
-        if tools:
-            print("\n🧪 Testing tool execution...")
-            result = await client.process_query("Show me my pending payments and cash summary")
-            print("\nResult:")
-            print("=" * 50)
-            print(result["summary"])
-            print("=" * 50)
+        print("\n👋 Automatically disconnected from FastMCP server")
         
     except Exception as e:
         logger.error(f"Error in main: {e}")
         print(f"❌ Error: {e}")
-    finally:
-        print("\n👋 Disconnecting from FastMCP server")
-        await client.disconnect()
 
 if __name__ == "__main__":
     asyncio.run(main())
