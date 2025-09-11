@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional, Union
 from dataclasses import dataclass
 
 # FastMCP 2.0 imports
-from fastmcp import FastMCPClient
+from fastmcp import Client
 
 # Import config
 try:
@@ -75,7 +75,7 @@ class FastMCPClientWrapper:
             config.MCP_SERVER_SCRIPT
         ] + config.MCP_SERVER_ARGS
         self.available_tools: List[Dict[str, Any]] = []
-        self.client: Optional[FastMCPClient] = None
+        self.client: Optional[Client] = None
         self.connected = False
         
         # Enhanced configuration
@@ -93,10 +93,9 @@ class FastMCPClientWrapper:
                 return True
                 
             # Create FastMCP client with stdio transport
-            self.client = FastMCPClient(
-                command=self.server_command[0],
-                args=self.server_command[1:] if len(self.server_command) > 1 else []
-            )
+            from fastmcp import FastMCP
+            server = FastMCP("mcp-server")
+            self.client = Client(transport=server)
             
             # Connect to server
             await self.client.connect()
