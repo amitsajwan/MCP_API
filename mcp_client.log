@@ -284,3 +284,198 @@ task: <Task pending name='Task-4' coro=<Client._session_runner() done, defined a
 2025-09-11 23:04:34,613 - __main__ - WARNING - [UI] MCP service initialization may have failed or timed out
 2025-09-11 23:04:34,613 - __main__ - INFO - [UI] Credentials status for 7w7ZifojwztYeGtFAAAB: not configured
 2025-09-11 23:04:34,614 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:04:34] "POST /socket.io/?EIO=4&transport=polling&t=PavrzZw&sid=UPLDxyORN9FlXdlDAAAA HTTP/1.1" 200 -
+2025-09-11 23:28:43,467 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.99:5000
+2025-09-11 23:28:43,468 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-09-11 23:29:14,289 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:14] "GET /socket.io/?EIO=4&transport=polling&t=Pavxdfa HTTP/1.1" 200 -
+2025-09-11 23:29:14,328 - __main__ - INFO - [UI] Client connected: IpT50i_CoH8RdXqdAAAB
+2025-09-11 23:29:14,332 - __main__ - INFO - [UI] Initializing MCP service for client IpT50i_CoH8RdXqdAAAB
+2025-09-11 23:29:14,334 - __main__ - INFO - [UI] Starting MCP service initialization...
+2025-09-11 23:29:14,337 - __main__ - INFO - [UI] MCP service instance created
+2025-09-11 23:29:14,339 - __main__ - INFO - [UI] Starting async initialization thread...
+2025-09-11 23:29:14,340 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:14] "GET /socket.io/?EIO=4&transport=polling&t=Pavxdft&sid=16onCHws8Fe0eugBAAAA HTTP/1.1" 200 -
+2025-09-11 23:29:14,350 - __main__ - INFO - [UI] Calling mcp_service.initialize()...
+2025-09-11 23:29:14,350 - mcp_service - INFO - 🔄 [MCP_SERVICE] Starting initialization...
+2025-09-11 23:29:14,351 - mcp_service - INFO - 🔄 [MCP_SERVICE] Creating Azure client...
+2025-09-11 23:29:14,352 - root - INFO - 🔄 [MCP_CLIENT] Creating Azure OpenAI client...
+2025-09-11 23:29:14,352 - azure.identity._credentials.environment - INFO - No environment configuration found.
+2025-09-11 23:29:14,363 - azure.identity._credentials.managed_identity - INFO - ManagedIdentityCredential will use IMDS
+2025-09-11 23:29:15,213 - root - INFO - ✅ [MCP_CLIENT] Azure OpenAI client created
+2025-09-11 23:29:15,220 - mcp_service - INFO - ✅ [MCP_SERVICE] Azure client created
+2025-09-11 23:29:15,221 - mcp_service - INFO - 🔄 [MCP_SERVICE] Parsing MCP server command: python mcp_server_fastmcp2.py --transport stdio
+2025-09-11 23:29:15,221 - mcp_service - INFO - 🔄 [MCP_SERVICE] Script path: mcp_server_fastmcp2.py, Args: ['--transport', 'stdio']
+2025-09-11 23:29:15,222 - mcp_service - INFO - 🔄 [MCP_SERVICE] Creating PythonStdioTransport...
+2025-09-11 23:29:15,246 - mcp_service - INFO - ✅ [MCP_SERVICE] Transport created
+2025-09-11 23:29:15,246 - mcp_service - INFO - 🔄 [MCP_SERVICE] Creating MCP client...
+2025-09-11 23:29:15,247 - mcp_service - INFO - ✅ [MCP_SERVICE] MCP client created
+2025-09-11 23:29:15,248 - mcp_service - INFO - 🔄 [MCP_SERVICE] Connecting to MCP server...
+2025-09-11 23:29:16,701 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:16] "GET / HTTP/1.1" 200 -
+2025-09-11 23:29:16,734 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:16] "GET /socket.io/?EIO=4&transport=websocket&sid=16onCHws8Fe0eugBAAAA HTTP/1.1" 200 -
+2025-09-11 23:29:16,774 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:16] "GET /socket.io/?EIO=4&transport=polling&t=PavxeGY HTTP/1.1" 200 -
+2025-09-11 23:29:16,804 - __main__ - INFO - [UI] Client connected: T3tarFSSL4F8soQ8AAAD
+2025-09-11 23:29:16,805 - __main__ - INFO - [UI] MCP service already initialized for client T3tarFSSL4F8soQ8AAAD
+2025-09-11 23:29:16,806 - __main__ - INFO - [UI] Credentials status for T3tarFSSL4F8soQ8AAAD: not configured
+2025-09-11 23:29:16,807 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:16] "GET /socket.io/?EIO=4&transport=polling&t=PavxeH0&sid=1ZVkfJQIPXi1HvDBAAAC HTTP/1.1" 200 -
+2025-09-11 23:29:16,807 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:16] "POST /socket.io/?EIO=4&transport=polling&t=PavxeG-&sid=1ZVkfJQIPXi1HvDBAAAC HTTP/1.1" 200 -
+2025-09-11 23:29:16,818 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:16] "GET /socket.io/?EIO=4&transport=polling&t=PavxeHE&sid=1ZVkfJQIPXi1HvDBAAAC HTTP/1.1" 200 -
+2025-09-11 23:29:16,848 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:16] "GET /socket.io/?EIO=4&transport=polling&t=PavxeHP&sid=1ZVkfJQIPXi1HvDBAAAC HTTP/1.1" 200 -
+2025-09-11 23:29:18,082 - mcp_service - INFO - ✅ [MCP_SERVICE] Connected to MCP server
+2025-09-11 23:29:18,083 - mcp_service - INFO - 🔄 [MCP_SERVICE] Loading tools...
+2025-09-11 23:29:18,083 - root - INFO - 🔄 [MCP_CLIENT] Fetching tools from MCP server...
+2025-09-11 23:29:18,098 - root - INFO - 🔄 [MCP_CLIENT] Received 51 tools from MCP server
+2025-09-11 23:29:18,099 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 1/51: cash_api_getPayments
+2025-09-11 23:29:18,099 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 2/51: cash_api_createPayment
+2025-09-11 23:29:18,099 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 3/51: cash_api_getPaymentById
+2025-09-11 23:29:18,100 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 4/51: cash_api_updatePayment
+2025-09-11 23:29:18,100 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 5/51: cash_api_approvePayment
+2025-09-11 23:29:18,100 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 6/51: cash_api_rejectPayment
+2025-09-11 23:29:18,100 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 7/51: cash_api_getTransactions
+2025-09-11 23:29:18,101 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 8/51: cash_api_getCashSummary
+2025-09-11 23:29:18,101 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 9/51: cls_api_getCLSSettlements
+2025-09-11 23:29:18,101 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 10/51: cls_api_createCLSSettlement
+2025-09-11 23:29:18,101 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 11/51: cls_api_getCLSSettlementById
+2025-09-11 23:29:18,102 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 12/51: cls_api_updateCLSSettlement
+2025-09-11 23:29:18,102 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 13/51: cls_api_cancelCLSSettlement
+2025-09-11 23:29:18,103 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 14/51: cls_api_getClearingStatus
+2025-09-11 23:29:18,103 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 15/51: cls_api_getRiskMetrics
+2025-09-11 23:29:18,103 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 16/51: cls_api_getCLSPositions
+2025-09-11 23:29:18,103 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 17/51: cls_api_getInstructions
+2025-09-11 23:29:18,104 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 18/51: cls_api_createInstruction
+2025-09-11 23:29:18,104 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 19/51: cls_api_getCLSSummary
+2025-09-11 23:29:18,104 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 20/51: mailbox_api_getMessages
+2025-09-11 23:29:18,104 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 21/51: mailbox_api_createMessage
+2025-09-11 23:29:18,105 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 22/51: mailbox_api_getMessageById
+2025-09-11 23:29:18,105 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 23/51: mailbox_api_updateMessage
+2025-09-11 23:29:18,106 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 24/51: mailbox_api_deleteMessage
+2025-09-11 23:29:18,107 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 25/51: mailbox_api_markMessageAsRead
+2025-09-11 23:29:18,107 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 26/51: mailbox_api_archiveMessage
+2025-09-11 23:29:18,108 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 27/51: mailbox_api_getNotifications
+2025-09-11 23:29:18,108 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 28/51: mailbox_api_createNotification
+2025-09-11 23:29:18,109 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 29/51: mailbox_api_getNotificationById
+2025-09-11 23:29:18,111 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 30/51: mailbox_api_deleteNotification
+2025-09-11 23:29:18,112 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 31/51: mailbox_api_dismissNotification
+2025-09-11 23:29:18,112 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 32/51: mailbox_api_getAlerts
+2025-09-11 23:29:18,112 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 33/51: mailbox_api_createAlert
+2025-09-11 23:29:18,112 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 34/51: mailbox_api_getAlertById
+2025-09-11 23:29:18,113 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 35/51: mailbox_api_updateAlert
+2025-09-11 23:29:18,113 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 36/51: mailbox_api_acknowledgeAlert
+2025-09-11 23:29:18,113 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 37/51: mailbox_api_resolveAlert
+2025-09-11 23:29:18,113 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 38/51: mailbox_api_getMailboxSummary
+2025-09-11 23:29:18,114 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 39/51: securities_api_getPortfolio
+2025-09-11 23:29:18,114 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 40/51: securities_api_getPositions
+2025-09-11 23:29:18,114 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 41/51: securities_api_getTrades
+2025-09-11 23:29:18,114 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 42/51: securities_api_createTrade
+2025-09-11 23:29:18,115 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 43/51: securities_api_getTradeById
+2025-09-11 23:29:18,115 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 44/51: securities_api_cancelTrade
+2025-09-11 23:29:18,115 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 45/51: securities_api_getSettlements
+2025-09-11 23:29:18,115 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 46/51: securities_api_getSettlementById
+2025-09-11 23:29:18,116 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 47/51: securities_api_getSecurities
+2025-09-11 23:29:18,116 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 48/51: securities_api_getSecurityPrice
+2025-09-11 23:29:18,116 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 49/51: securities_api_getSecuritiesSummary
+2025-09-11 23:29:18,117 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 50/51: set_credentials
+2025-09-11 23:29:18,117 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 51/51: perform_login
+2025-09-11 23:29:18,117 - root - INFO - ✅ [MCP_CLIENT] Loaded 51 tools from MCP server
+2025-09-11 23:29:18,118 - mcp_service - INFO - ✅ [MCP_SERVICE] Loaded 51 tools
+2025-09-11 23:29:18,118 - mcp_service - INFO - ✅ [MCP_SERVICE] Modern LLM Service initialized successfully
+2025-09-11 23:29:18,118 - __main__ - INFO - [UI] MCP Service initialized successfully
+2025-09-11 23:29:18,120 - __main__ - INFO - [UI] Async initialization thread completed
+2025-09-11 23:29:18,120 - __main__ - WARNING - [UI] MCP service initialization may have failed or timed out
+2025-09-11 23:29:18,121 - __main__ - INFO - [UI] Credentials status for IpT50i_CoH8RdXqdAAAB: not configured
+2025-09-11 23:29:18,122 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:29:18] "POST /socket.io/?EIO=4&transport=polling&t=Pavxdfr&sid=16onCHws8Fe0eugBAAAA HTTP/1.1" 200 -
+2025-09-11 23:29:32,001 - __main__ - INFO - [UI] Received message from T3tarFSSL4F8soQ8AAAD: 'get cash summary'
+2025-09-11 23:29:32,006 - __main__ - INFO - [UI] Added user message to conversation history for T3tarFSSL4F8soQ8AAAD
+2025-09-11 23:29:32,007 - __main__ - WARNING - [UI] MCP service not available for T3tarFSSL4F8soQ8AAAD, sending fallback response
+2025-09-11 23:30:14,341 - __main__ - INFO - [UI] Client disconnected: IpT50i_CoH8RdXqdAAAB
+2025-09-11 23:30:14,341 - __main__ - INFO - [UI] Cleaned up conversation history for IpT50i_CoH8RdXqdAAAB
+2025-09-11 23:31:11,909 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://192.168.1.99:5000
+2025-09-11 23:31:11,910 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-09-11 23:31:11,933 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:31:11] "GET /socket.io/?EIO=4&transport=polling&t=Pavy4Bm HTTP/1.1" 200 -
+2025-09-11 23:31:11,979 - __main__ - INFO - [UI] Client connected: O1Hd7PoKaodhCsipAAAB
+2025-09-11 23:31:11,981 - __main__ - INFO - [UI] Initializing MCP service for client O1Hd7PoKaodhCsipAAAB
+2025-09-11 23:31:11,981 - __main__ - INFO - [UI] Starting MCP service initialization...
+2025-09-11 23:31:11,982 - __main__ - INFO - [UI] MCP service instance created
+2025-09-11 23:31:11,982 - __main__ - INFO - [UI] Starting async initialization thread...
+2025-09-11 23:31:11,984 - __main__ - INFO - [UI] Calling mcp_service.initialize()...
+2025-09-11 23:31:11,984 - mcp_service - INFO - 🔄 [MCP_SERVICE] Starting initialization...
+2025-09-11 23:31:11,985 - mcp_service - INFO - 🔄 [MCP_SERVICE] Creating Azure client...
+2025-09-11 23:31:11,985 - root - INFO - 🔄 [MCP_CLIENT] Creating Azure OpenAI client...
+2025-09-11 23:31:11,985 - azure.identity._credentials.environment - INFO - No environment configuration found.
+2025-09-11 23:31:11,994 - azure.identity._credentials.managed_identity - INFO - ManagedIdentityCredential will use IMDS
+2025-09-11 23:31:11,998 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:31:11] "GET /socket.io/?EIO=4&transport=polling&t=Pavy4OE&sid=jJ2hHaJcyA0O_qVSAAAA HTTP/1.1" 200 -
+2025-09-11 23:31:12,724 - root - INFO - ✅ [MCP_CLIENT] Azure OpenAI client created
+2025-09-11 23:31:12,725 - mcp_service - INFO - ✅ [MCP_SERVICE] Azure client created
+2025-09-11 23:31:12,725 - mcp_service - INFO - 🔄 [MCP_SERVICE] Parsing MCP server command: python mcp_server_fastmcp2.py --transport stdio
+2025-09-11 23:31:12,725 - mcp_service - INFO - 🔄 [MCP_SERVICE] Script path: mcp_server_fastmcp2.py, Args: ['--transport', 'stdio']
+2025-09-11 23:31:12,726 - mcp_service - INFO - 🔄 [MCP_SERVICE] Creating PythonStdioTransport...
+2025-09-11 23:31:12,736 - mcp_service - INFO - ✅ [MCP_SERVICE] Transport created
+2025-09-11 23:31:12,737 - mcp_service - INFO - 🔄 [MCP_SERVICE] Creating MCP client...
+2025-09-11 23:31:12,738 - mcp_service - INFO - ✅ [MCP_SERVICE] MCP client created
+2025-09-11 23:31:12,739 - mcp_service - INFO - 🔄 [MCP_SERVICE] Connecting to MCP server...
+2025-09-11 23:31:15,328 - mcp_service - INFO - ✅ [MCP_SERVICE] Connected to MCP server
+2025-09-11 23:31:15,329 - mcp_service - INFO - 🔄 [MCP_SERVICE] Loading tools...
+2025-09-11 23:31:15,330 - root - INFO - 🔄 [MCP_CLIENT] Fetching tools from MCP server...
+2025-09-11 23:31:15,355 - root - INFO - 🔄 [MCP_CLIENT] Received 51 tools from MCP server
+2025-09-11 23:31:15,355 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 1/51: cash_api_getPayments
+2025-09-11 23:31:15,356 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 2/51: cash_api_createPayment
+2025-09-11 23:31:15,357 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 3/51: cash_api_getPaymentById
+2025-09-11 23:31:15,357 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 4/51: cash_api_updatePayment
+2025-09-11 23:31:15,357 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 5/51: cash_api_approvePayment
+2025-09-11 23:31:15,358 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 6/51: cash_api_rejectPayment
+2025-09-11 23:31:15,358 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 7/51: cash_api_getTransactions
+2025-09-11 23:31:15,359 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 8/51: cash_api_getCashSummary
+2025-09-11 23:31:15,359 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 9/51: cls_api_getCLSSettlements
+2025-09-11 23:31:15,359 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 10/51: cls_api_createCLSSettlement
+2025-09-11 23:31:15,360 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 11/51: cls_api_getCLSSettlementById
+2025-09-11 23:31:15,360 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 12/51: cls_api_updateCLSSettlement
+2025-09-11 23:31:15,361 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 13/51: cls_api_cancelCLSSettlement
+2025-09-11 23:31:15,362 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 14/51: cls_api_getClearingStatus
+2025-09-11 23:31:15,364 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 15/51: cls_api_getRiskMetrics
+2025-09-11 23:31:15,364 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 16/51: cls_api_getCLSPositions
+2025-09-11 23:31:15,365 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 17/51: cls_api_getInstructions
+2025-09-11 23:31:15,367 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 18/51: cls_api_createInstruction
+2025-09-11 23:31:15,367 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 19/51: cls_api_getCLSSummary
+2025-09-11 23:31:15,370 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 20/51: mailbox_api_getMessages
+2025-09-11 23:31:15,371 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 21/51: mailbox_api_createMessage
+2025-09-11 23:31:15,372 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 22/51: mailbox_api_getMessageById
+2025-09-11 23:31:15,373 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 23/51: mailbox_api_updateMessage
+2025-09-11 23:31:15,373 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 24/51: mailbox_api_deleteMessage
+2025-09-11 23:31:15,373 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 25/51: mailbox_api_markMessageAsRead
+2025-09-11 23:31:15,374 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 26/51: mailbox_api_archiveMessage
+2025-09-11 23:31:15,374 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 27/51: mailbox_api_getNotifications
+2025-09-11 23:31:15,374 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 28/51: mailbox_api_createNotification
+2025-09-11 23:31:15,375 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 29/51: mailbox_api_getNotificationById
+2025-09-11 23:31:15,375 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 30/51: mailbox_api_deleteNotification
+2025-09-11 23:31:15,375 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 31/51: mailbox_api_dismissNotification
+2025-09-11 23:31:15,376 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 32/51: mailbox_api_getAlerts
+2025-09-11 23:31:15,376 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 33/51: mailbox_api_createAlert
+2025-09-11 23:31:15,376 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 34/51: mailbox_api_getAlertById
+2025-09-11 23:31:15,377 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 35/51: mailbox_api_updateAlert
+2025-09-11 23:31:15,377 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 36/51: mailbox_api_acknowledgeAlert
+2025-09-11 23:31:15,378 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 37/51: mailbox_api_resolveAlert
+2025-09-11 23:31:15,378 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 38/51: mailbox_api_getMailboxSummary
+2025-09-11 23:31:15,378 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 39/51: securities_api_getPortfolio
+2025-09-11 23:31:15,384 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 40/51: securities_api_getPositions
+2025-09-11 23:31:15,386 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 41/51: securities_api_getTrades
+2025-09-11 23:31:15,387 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 42/51: securities_api_createTrade
+2025-09-11 23:31:15,387 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 43/51: securities_api_getTradeById
+2025-09-11 23:31:15,388 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 44/51: securities_api_cancelTrade
+2025-09-11 23:31:15,388 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 45/51: securities_api_getSettlements
+2025-09-11 23:31:15,388 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 46/51: securities_api_getSettlementById
+2025-09-11 23:31:15,389 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 47/51: securities_api_getSecurities
+2025-09-11 23:31:15,389 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 48/51: securities_api_getSecurityPrice
+2025-09-11 23:31:15,389 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 49/51: securities_api_getSecuritiesSummary
+2025-09-11 23:31:15,390 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 50/51: set_credentials
+2025-09-11 23:31:15,390 - root - INFO - 🔧 [MCP_CLIENT] Processing tool 51/51: perform_login
+2025-09-11 23:31:15,390 - root - INFO - ✅ [MCP_CLIENT] Loaded 51 tools from MCP server
+2025-09-11 23:31:15,391 - mcp_service - INFO - ✅ [MCP_SERVICE] Loaded 51 tools
+2025-09-11 23:31:15,391 - mcp_service - INFO - ✅ [MCP_SERVICE] Modern LLM Service initialized successfully
+2025-09-11 23:31:15,392 - __main__ - INFO - [UI] MCP Service initialized successfully
+2025-09-11 23:31:15,393 - __main__ - INFO - [UI] Async initialization thread completed
+2025-09-11 23:31:15,393 - __main__ - INFO - [UI] MCP service initialization completed successfully
+2025-09-11 23:31:15,393 - __main__ - INFO - [UI] Credentials status for O1Hd7PoKaodhCsipAAAB: not configured
+2025-09-11 23:31:15,395 - werkzeug - INFO - 192.168.1.99 - - [11/Sep/2025 23:31:15] "POST /socket.io/?EIO=4&transport=polling&t=Pavy4OC&sid=jJ2hHaJcyA0O_qVSAAAA HTTP/1.1" 200 -

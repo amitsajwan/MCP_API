@@ -46,6 +46,9 @@ def initialize_mcp_service():
         mcp_service = ModernLLMService()
         logger.info("[UI] MCP service instance created")
         
+        # Use a result variable to track initialization status
+        init_result = {'success': False, 'error': None}
+        
         def run_async_init():
             logger.info("[UI] Starting async initialization thread...")
             loop = asyncio.new_event_loop()
@@ -53,6 +56,7 @@ def initialize_mcp_service():
             try:
                 logger.info("[UI] Calling mcp_service.initialize()...")
                 result = loop.run_until_complete(mcp_service.initialize())
+                init_result['success'] = result
                 service_initialized = result
                 if result:
                     logger.info("[UI] MCP Service initialized successfully")
@@ -64,6 +68,7 @@ def initialize_mcp_service():
                     socketio.emit('error', {'message': 'MCP Service initialization failed'})
             except Exception as e:
                 logger.error(f"[UI] Error in async initialization: {e}")
+                init_result['error'] = str(e)
                 service_initialized = False
             finally:
                 loop.close()
@@ -72,12 +77,19 @@ def initialize_mcp_service():
         thread = threading.Thread(target=run_async_init)
         thread.daemon = True
         thread.start()
+        
+        # Wait for thread to complete with timeout
         thread.join(timeout=15)
         
-        if service_initialized:
+        # Check results
+        if thread.is_alive():
+            logger.warning("[UI] MCP service initialization timed out after 15 seconds")
+        elif init_result['success']:
             logger.info("[UI] MCP service initialization completed successfully")
+        elif init_result['error']:
+            logger.error(f"[UI] MCP service initialization failed: {init_result['error']}")
         else:
-            logger.warning("[UI] MCP service initialization may have failed or timed out")
+            logger.warning("[UI] MCP service initialization failed")
         
     except Exception as e:
         logger.error(f"[UI] Error initializing MCP service: {e}")

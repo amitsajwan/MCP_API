@@ -1,0 +1,30 @@
+2025-09-11 23:29:17,702 - fastmcp2_server - INFO - 🚀 Initializing FastMCP 2.0 Server...
+2025-09-11 23:29:17,702 - fastmcp2_server - INFO - 📂 Loading API specifications...
+2025-09-11 23:29:17,755 - fastmcp2_server - INFO - 📋 Registered 8 tools from cash_api API spec
+2025-09-11 23:29:17,756 - fastmcp2_server - INFO - Loaded API spec: cash_api -> https://api.company.com/cash/v1
+2025-09-11 23:29:17,828 - fastmcp2_server - INFO - 📋 Registered 11 tools from cls_api API spec
+2025-09-11 23:29:17,829 - fastmcp2_server - INFO - Loaded API spec: cls_api -> https://api.company.com/cls/v1
+2025-09-11 23:29:17,937 - fastmcp2_server - INFO - 📋 Registered 19 tools from mailbox_api API spec
+2025-09-11 23:29:17,938 - fastmcp2_server - INFO - Loaded API spec: mailbox_api -> https://api.company.com/mailbox/v1
+2025-09-11 23:29:18,014 - fastmcp2_server - INFO - 📋 Registered 11 tools from securities_api API spec
+2025-09-11 23:29:18,014 - fastmcp2_server - INFO - Loaded API spec: securities_api -> https://api.company.com/securities/v1
+2025-09-11 23:29:18,015 - fastmcp2_server - INFO - 🔧 Registering FastMCP 2.0 tools...
+2025-09-11 23:29:18,019 - fastmcp2_server - INFO - ✅ FastMCP 2.0 Server initialized with 4 API specs
+2025-09-11 23:29:18,019 - fastmcp2_server - INFO - 🔓 No credentials found in environment - use set_credentials tool
+2025-09-11 23:29:18,019 - fastmcp2_server - INFO - 🚀 Starting FastMCP 2.0 server with stdio transport
+2025-09-11 23:29:18,085 - mcp.server.lowlevel.server - INFO - Processing request of type ListToolsRequest
+2025-09-11 23:31:14,943 - fastmcp2_server - INFO - 🚀 Initializing FastMCP 2.0 Server...
+2025-09-11 23:31:14,944 - fastmcp2_server - INFO - 📂 Loading API specifications...
+2025-09-11 23:31:15,003 - fastmcp2_server - INFO - 📋 Registered 8 tools from cash_api API spec
+2025-09-11 23:31:15,003 - fastmcp2_server - INFO - Loaded API spec: cash_api -> https://api.company.com/cash/v1
+2025-09-11 23:31:15,078 - fastmcp2_server - INFO - 📋 Registered 11 tools from cls_api API spec
+2025-09-11 23:31:15,078 - fastmcp2_server - INFO - Loaded API spec: cls_api -> https://api.company.com/cls/v1
+2025-09-11 23:31:15,194 - fastmcp2_server - INFO - 📋 Registered 19 tools from mailbox_api API spec
+2025-09-11 23:31:15,194 - fastmcp2_server - INFO - Loaded API spec: mailbox_api -> https://api.company.com/mailbox/v1
+2025-09-11 23:31:15,260 - fastmcp2_server - INFO - 📋 Registered 11 tools from securities_api API spec
+2025-09-11 23:31:15,261 - fastmcp2_server - INFO - Loaded API spec: securities_api -> https://api.company.com/securities/v1
+2025-09-11 23:31:15,261 - fastmcp2_server - INFO - 🔧 Registering FastMCP 2.0 tools...
+2025-09-11 23:31:15,267 - fastmcp2_server - INFO - ✅ FastMCP 2.0 Server initialized with 4 API specs
+2025-09-11 23:31:15,268 - fastmcp2_server - INFO - 🔓 No credentials found in environment - use set_credentials tool
+2025-09-11 23:31:15,269 - fastmcp2_server - INFO - 🚀 Starting FastMCP 2.0 server with stdio transport
+2025-09-11 23:31:15,335 - mcp.server.lowlevel.server - INFO - Processing request of type ListToolsRequest
