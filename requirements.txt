@@ -1,5 +1,5 @@
-# MCP Chatbot System Requirements
-# Core MCP and FastAPI
+# FastMCP Chatbot System Requirements
+# Core FastMCP and FastAPI
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 websockets>=11.0
@@ -8,17 +8,21 @@ fastmcp>=2.0.0
 # HTTP client for MCP server communication
 aiohttp>=3.8.0
 
-# Azure OpenAI and Authentication  
-openai>=1.0.0
-azure-identity>=1.15.0
-
-# Data handling
+# Data handling and validation
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 pyyaml>=6.0
 requests>=2.31.0
 
-# Development (optional)
+# Timezone support
+pytz>=2023.3
+
+# Development and testing
 pytest>=7.0.0
 pytest-asyncio>=0.21.0
 black>=23.0.0
+flake8>=6.0.0
+
+# Optional: For enhanced functionality
+# openai>=1.0.0  # Uncomment if you want OpenAI integration
+# azure-identity>=1.15.0  # Uncomment if you want Azure integration
