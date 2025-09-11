@@ -1,277 +1,99 @@
-# Modern LLM Tool Capabilities Demo
+# Intelligent MCP Bot with Azure GPT-4o
 
-## 🚀 **End-to-End Demonstration of Advanced LLM Tool Usage**
+**Objective**: LLM understands user requirements and automatically executes the appropriate tools to fulfill them.
 
-This project showcases the cutting-edge capabilities of modern LLMs when working with tools, demonstrating how they can intelligently select, chain, and adapt tool usage in complex scenarios.
+## 🧠 What This Does
 
-## 🎯 **Modern LLM Capabilities Demonstrated**
+The LLM intelligently:
+- **Understands** your natural language requests
+- **Selects** the right tools from 51 available APIs
+- **Executes** tools automatically to fulfill your needs
+- **Chains** multiple tools when needed
+- **Handles** errors and retries gracefully
 
-### 1. **Intelligent Tool Selection** 🧠
-- LLM analyzes user intent and selects the most appropriate tools
-- Goes beyond simple keyword matching to understand context
+## 🚀 Quick Start
 
-### 2. **Complex Tool Chaining** 🔗
-- LLM chains multiple tools in logical sequences
-- Maintains context across tool calls
+### Option 1: Demo Mode (No Azure Required)
+```bash
+python intelligent_bot_demo.py
+```
+- Works immediately without Azure credentials
+- Shows intelligent tool selection and execution
+- Demonstrates modern LLM capabilities
 
-### 3. **Adaptive Tool Usage** 🔄
-- LLM adapts tool usage based on results
-- Dynamic decision-making based on real-time data
+### Option 2: Full Mode (With Azure)
+```bash
+# Set Azure credentials
+$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+$env:AZURE_DEPLOYMENT_NAME="gpt-4o"
+$env:AZURE_CLIENT_ID="your-client-id"
+$env:AZURE_CLIENT_SECRET="your-client-secret"
+$env:AZURE_TENANT_ID="your-tenant-id"
 
-### 4. **Error Handling & Retry Logic** 🛡️
-- Graceful handling of tool failures
-- Alternative strategy execution
+# Run the intelligent bot
+python intelligent_bot.py
+```
 
-### 5. **Reasoning About Tool Outputs** 🧩
-- High-level analysis and synthesis
-- Insights generation from tool results
+### Option 3: Web UI
+```bash
+python web_ui_ws.py
+```
+- Open http://localhost:5000
+- Configure credentials in the UI
+- Chat with the intelligent bot
 
-## 🚀 **Quick Start**
+## 🎯 Example Interactions
 
-### 1. **Install Dependencies**
+```
+You: "Show me all pending payments over $1000"
+🧠 Analyzing your request...
+🔧 Tools executed:
+  - cash_api_getPayments: ✅ Success
+    Args: {"status": "pending", "amount_min": 1000}
+🤖 Response: I found 3 pending payments over $1000...
+
+You: "I need to approve payment 12345 and create a CLS settlement"
+🧠 Analyzing your request...
+🔧 Tools executed:
+  - cash_api_updatePayment: ✅ Success
+    Args: {"payment_id": "12345", "status": "approved"}
+  - cls_api_createSettlement: ✅ Success
+    Args: {"payment_id": "12345", "amount": 5000}
+🤖 Response: I've successfully approved payment 12345 and created a CLS settlement...
+```
+
+## 🔧 Available Tools
+
+**51 tools** from 4 APIs:
+- **Cash API**: Payments, transactions, approvals
+- **CLS API**: Settlements, currency operations  
+- **Mailbox API**: Message management
+- **Securities API**: Trading, positions, orders
+
+## 📁 Core Files
+
+- `mcp_server_fastmcp2.py` - MCP server with 51 tools
+- `mcp_client.py` - MCP client for Azure GPT-4o
+- `mcp_service.py` - Modern LLM service
+- `intelligent_bot.py` - Command-line intelligent bot
+- `intelligent_bot_demo.py` - Demo version (no Azure required)
+- `web_ui_ws.py` - WebSocket UI
+- `templates/chat_ws.html` - Web UI template
+
+## 🛠️ Installation
+
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. **Configure Environment Variables**
+## 🎯 The Point
 
-#### **Azure OpenAI (Required)**
-```bash
-export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-export AZURE_DEPLOYMENT_NAME="gpt-4o"
-```
+**This is NOT just a chat bot.** This is an intelligent system where:
 
-#### **API Credentials (Choose one method)**
+1. **You ask** in natural language: "Show me all pending payments over $1000"
+2. **LLM understands** what you need
+3. **LLM selects** the right tool: `cash_api_getPayments`
+4. **LLM executes** the tool with correct parameters
+5. **LLM responds** with intelligent analysis of the results
 
-**Method 1: Environment Variables**
-```bash
-# Basic Authentication
-export API_USERNAME="your-username"
-export API_PASSWORD="your-password"
-
-# API Key Authentication
-export API_KEY_NAME="X-API-Key"
-export API_KEY_VALUE="your-api-key"
-
-# Optional: Custom URLs
-export LOGIN_URL="https://your-api.com/login"
-export FORCE_BASE_URL="https://your-api.com"
-```
-
-**Method 2: Web UI Configuration**
-- Click the "🔐 Not Configured" status in the web interface
-- Enter your credentials in the configuration dialog
-- System automatically:
-  1. Saves credentials to MCP server
-  2. Performs login to get session ID (JSESSIONID)
-  3. Uses session ID in headers for all API calls
-
-**📋 See [ENVIRONMENT_SETUP.md](ENVIRONMENT_SETUP.md) for detailed setup instructions**
-
-### 3. **Launch Demo**
-```bash
-python launch_modern_demo.py
-```
-
-### 4. **Open Browser**
-Navigate to `http://localhost:5000` and try these queries:
-- "Check my account balance and recent transactions"
-- "Get my financial summary and recommend investments"
-- "Transfer money and invest in stocks"
-
-## 📁 **Project Structure**
-
-```
-MCP_API/
-├── mcp_server_fastmcp2.py    # MCP server with API tools
-├── mcp_client.py             # MCP client for Azure GPT-4o
-├── mcp_service.py            # Modern LLM service
-├── web_ui_ws.py              # WebSocket web interface
-├── modern_llm_demo.py        # Demo script
-├── launch_modern_demo.py     # Launcher
-├── templates/
-│   └── chat_ws.html         # Chat interface
-├── openapi_specs/           # API specifications
-└── requirements.txt         # Dependencies
-```
-
-## 🏗 **Architecture**
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Web Browser   │    │  Flask WebSocket│    │  Modern LLM     │
-│   (Real-time)   │◄──►│      UI         │◄──►│    Service      │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                                       │
-                                                       ▼
-                                               ┌─────────────────┐
-                                               │  Azure GPT-4o   │
-                                               │ (Modern LLM)    │
-                                               └─────────────────┘
-                                                       │
-                                                       ▼
-                                               ┌─────────────────┐
-                                               │   MCP Client    │
-                                               │  (Tool Bridge)  │
-                                               └─────────────────┘
-                                                       │
-                                                       ▼
-                                               ┌─────────────────┐
-                                               │   MCP Server    │
-                                               │  (Tool Registry)│
-                                               └─────────────────┘
-```
-
-## 🎨 **Visual Features**
-
-### **Real-time Capability Indicators**
-- 🧠 **Intelligent Selection** - Shows when LLM selects tools intelligently
-- 🔗 **Tool Chaining** - Visualizes tool execution sequence
-- 🔄 **Adaptive Usage** - Indicates when LLM adapts based on results
-- 🛡️ **Error Handling** - Shows error recovery and retry logic
-- 🧩 **Reasoning** - Displays when LLM reasons about outputs
-
-### **Tool Chain Visualization**
-```
-Tool Chain: [get_balance] → [analyze_spending] → [recommend_budget]
-```
-
-## 🔧 **Available Tools**
-
-The MCP server provides tools for:
-- **Cash API**: Account balances, transactions, transfers
-- **CLS API**: Payment status, settlement information
-- **Mailbox API**: Message management, notifications
-- **Securities API**: Portfolio management, trading
-
-## 🚀 **Direct Usage (Without Demo Mode)**
-
-### **Method 1: Start MCP Server Only**
-
-Run the MCP server directly to expose all 51 tools:
-
-```bash
-# Start the MCP server
-python mcp_server_fastmcp2.py --transport stdio
-```
-
-This will:
-- Load all 4 OpenAPI specifications
-- Register 51 tools (49 OpenAPI + 2 auth)
-- Start the server on stdio transport
-- Show all available tools and their schemas
-
-### **Method 2: Start Web UI Only**
-
-Run the web interface without the demo launcher:
-
-```bash
-# Start the web UI directly
-python web_ui_ws.py
-```
-
-Then open `http://localhost:5000` in your browser.
-
-### **Method 3: Use MCP Client Directly**
-
-Use the MCP client to interact with tools programmatically:
-
-```bash
-# Run a single query
-python mcp_client.py "Get all pending payments" --server "python mcp_server_fastmcp2.py --transport stdio"
-
-# Or use the modern LLM service
-python modern_llm_demo.py "Show me cash summary for today"
-```
-
-### **Method 4: Custom Integration**
-
-Use the MCP service in your own code:
-
-```python
-from mcp_service import ModernLLMService
-
-# Initialize the service
-service = ModernLLMService()
-await service.initialize()
-
-# Use the service
-result = await service.process_message("Get all pending payments")
-print(result["response"])
-
-# Clean up
-await service.cleanup()
-```
-
-### **Method 5: Direct MCP Server Integration**
-
-Connect to the MCP server from your own application:
-
-```python
-from mcp_client import MCPClient, PythonStdioTransport
-
-# Connect to MCP server
-transport = PythonStdioTransport("mcp_server_fastmcp2.py", args=["--transport", "stdio"])
-async with MCPClient(transport) as mcp:
-    # List available tools
-    tools = await mcp.list_tools()
-    print(f"Available tools: {len(tools)}")
-    
-    # Call a specific tool
-    result = await mcp.call_tool("cash_api_getPayments", {"status": "pending"})
-    print(result)
-```
-
-## 🚨 **Troubleshooting**
-
-### **Common Issues**
-
-1. **Azure Authentication Failed**
-   - Check your Azure credentials and permissions
-   - Ensure the Azure OpenAI resource is accessible
-
-2. **MCP Server Connection Failed**
-   - Verify the server command in `mcp_service.py`
-   - Check that `mcp_server_fastmcp2.py` is working
-
-3. **Tool Calls Failing**
-   - Check the OpenAPI specifications in `openapi_specs/`
-   - Verify API endpoints are accessible
-
-### **Debug Mode**
-
-Run with debug logging:
-```bash
-export LOG_LEVEL=DEBUG
-python launch_modern_demo.py
-```
-
-## 📝 **Development**
-
-### **Adding New Tools**
-
-1. Add OpenAPI specification to `openapi_specs/`
-2. Update `mcp_server_fastmcp2.py` to include the new API
-3. Restart the server
-
-### **Customizing the UI**
-
-Edit `templates/chat_ws.html` to modify the web interface appearance and behavior.
-
-## 🤝 **Contributing**
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## 📄 **License**
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🙏 **Acknowledgments**
-
-- [FastMCP](https://github.com/jlowin/fastmcp) for the MCP implementation
-- [Azure OpenAI](https://azure.microsoft.com/en-us/products/ai-services/openai-service) for the language model
-- [Flask](https://flask.palletsprojects.com/) for the web framework
+**The LLM is the intelligence that orchestrates the tools to fulfill your requirements.**

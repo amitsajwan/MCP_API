@@ -38,10 +38,14 @@ except ImportError:
     
     config = DefaultConfig()
 
-# Configure logging
+# Configure comprehensive logging for MCP server
 logging.basicConfig(
     level=getattr(logging, config.LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('mcp_server.log', encoding='utf-8')
+    ]
 )
 logger = logging.getLogger("fastmcp2_server")
 
@@ -588,19 +592,28 @@ class FastMCP2Server:
     
     def _execute_tool(self, tool_name: str, spec_name: str, method: str, path: str, base_url: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Execute an API tool."""
+        logger.info(f"🔧 [MCP_SERVER] Executing tool: {tool_name}")
+        logger.info(f"🔧 [MCP_SERVER] Spec: {spec_name}, Method: {method}, Path: {path}")
+        logger.info(f"🔧 [MCP_SERVER] Arguments: {list(arguments.keys())}")
+        
         try:
             # Ensure authentication
+            logger.info(f"🔐 [MCP_SERVER] Checking authentication for {tool_name}")
             if not self._ensure_authenticated():
+                logger.error(f"❌ [MCP_SERVER] Authentication failed for {tool_name}")
                 return {"status": "error", "message": "Authentication failed"}
+            logger.info(f"✅ [MCP_SERVER] Authentication successful for {tool_name}")
             
             # Build request URL
             url = f"{base_url.rstrip('/')}{path}"
+            logger.info(f"🔗 [MCP_SERVER] Base URL: {base_url}, Final URL: {url}")
             
             # Replace path parameters
             for param_name, value in arguments.items():
                 placeholder = f"{{{param_name}}}"
                 if placeholder in url:
                     url = url.replace(placeholder, str(value))
+                    logger.info(f"🔗 [MCP_SERVER] Replaced {placeholder} with {value}")
             
             # Prepare request headers
             headers = {
@@ -614,15 +627,20 @@ class FastMCP2Server:
             # Add API key if configured
             if self.api_key_name and self.api_key_value:
                 headers[self.api_key_name] = self.api_key_value
+                logger.info(f"🔑 [MCP_SERVER] Added API key: {self.api_key_name}")
             
             # Get session
             session = self.sessions.get(spec_name)
             if not session:
+                logger.info(f"🔄 [MCP_SERVER] Creating new session for {spec_name}")
                 session = requests.Session()
                 session.headers.update({'User-Agent': 'FastMCP2-Financial-API-Client/2.0'})
                 if self.session_id:
                     session.cookies.set('JSESSIONID', self.session_id)
+                    logger.info(f"🍪 [MCP_SERVER] Set JSESSIONID: {self.session_id[:20]}...")
                 self.sessions[spec_name] = session
+            else:
+                logger.info(f"✅ [MCP_SERVER] Using existing session for {spec_name}")
             
             # Prepare request data
             request_data = None
@@ -631,14 +649,19 @@ class FastMCP2Server:
             for param_name, value in arguments.items():
                 if param_name == 'body':
                     request_data = value
+                    logger.info(f"📦 [MCP_SERVER] Request body: {len(str(value))} chars")
                 elif not param_name.startswith('header_'):
                     # Only add to query params if it's not a path parameter
                     placeholder = f"{{{param_name}}}"
                     if placeholder not in path:
                         query_params[param_name] = value
+                        logger.info(f"❓ [MCP_SERVER] Query param: {param_name} = {value}")
             
             # Make request
-            logger.info(f"Making {method} request to {url}")
+            logger.info(f"🌐 [MCP_SERVER] Making {method} request to {url}")
+            logger.info(f"🌐 [MCP_SERVER] Query params: {query_params}")
+            logger.info(f"🌐 [MCP_SERVER] Headers: {list(headers.keys())}")
+            
             response = session.request(
                 method=method,
                 url=url,
@@ -650,14 +673,20 @@ class FastMCP2Server:
                 allow_redirects=True
             )
             
+            logger.info(f"📡 [MCP_SERVER] Response status: {response.status_code}")
+            logger.info(f"📡 [MCP_SERVER] Response headers: {list(response.headers.keys())}")
+            
             response.raise_for_status()
             
             # Parse response
             try:
                 result = response.json()
+                logger.info(f"✅ [MCP_SERVER] JSON response parsed successfully")
             except json.JSONDecodeError:
                 result = response.text
+                logger.info(f"📝 [MCP_SERVER] Text response: {len(result)} chars")
             
+            logger.info(f"✅ [MCP_SERVER] Tool {tool_name} executed successfully")
             return {
                 "status": "success",
                 "data": result,
@@ -677,14 +706,14 @@ class FastMCP2Server:
                 except:
                     error_msg = f"API Error ({status_code}): {e.response.text[:500]}"
             
-            logger.error(f"API request failed: {error_msg}")
+            logger.error(f"❌ [MCP_SERVER] API request failed for {tool_name}: {error_msg}")
             return {
                 "status": "error",
                 "message": error_msg,
                 "status_code": status_code
             }
         except Exception as e:
-            logger.error(f"Unexpected error executing tool {tool_name}: {e}", exc_info=True)
+            logger.error(f"❌ [MCP_SERVER] Unexpected error executing tool {tool_name}: {e}", exc_info=True)
             return {
                 "status": "error",
                 "message": f"Unexpected error: {str(e)}"

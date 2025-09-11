@@ -25,7 +25,16 @@ AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o")  # your GPT-4o d
 API_VERSION = "2024-02-01"
 MAX_TOKENS_TOOL_RESPONSE = 4000  # safeguard for huge payloads
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=LOG_LEVEL)
+
+# Configure comprehensive logging for MCP client
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('mcp_client.log', encoding='utf-8')
+    ]
+)
 
 
 # ---------- HELPERS ----------
@@ -53,6 +62,7 @@ def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
 
 async def create_azure_client() -> AsyncAzureOpenAI:
     """Create Azure OpenAI client with Azure AD token provider."""
+    logging.info("🔄 [MCP_CLIENT] Creating Azure OpenAI client...")
     credential = DefaultAzureCredential()
     token_provider = get_bearer_token_provider(
         credential, "https://cognitiveservices.azure.com/.default"
@@ -62,15 +72,19 @@ async def create_azure_client() -> AsyncAzureOpenAI:
         azure_ad_token_provider=token_provider,
         api_version=API_VERSION
     )
-    logging.info("✅ Azure OpenAI client created")
+    logging.info("✅ [MCP_CLIENT] Azure OpenAI client created")
     return client
 
 
 async def list_and_prepare_tools(mcp: MCPClient) -> List[Dict[str, Any]]:
     """Fetch available tools and convert them for Azure OpenAI."""
+    logging.info("🔄 [MCP_CLIENT] Fetching tools from MCP server...")
     tools = await mcp.list_tools()
+    logging.info(f"🔄 [MCP_CLIENT] Received {len(tools)} tools from MCP server")
+    
     formatted = []
-    for tool in tools:
+    for i, tool in enumerate(tools, 1):
+        logging.info(f"🔧 [MCP_CLIENT] Processing tool {i}/{len(tools)}: {tool.name}")
         formatted.append({
             "type": "function",
             "function": {
@@ -79,7 +93,7 @@ async def list_and_prepare_tools(mcp: MCPClient) -> List[Dict[str, Any]]:
                 "parameters": tool.inputSchema or {"type": "object", "properties": {}}
             }
         })
-    logging.info(f"🔧 Loaded {len(formatted)} tools from MCP server")
+    logging.info(f"✅ [MCP_CLIENT] Loaded {len(formatted)} tools from MCP server")
     return formatted
 
 
