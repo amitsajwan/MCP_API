@@ -1,0 +1,23 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting fastmcp
+  Downloading fastmcp-2.12.2-py3-none-any.whl.metadata (17 kB)
+Collecting authlib>=1.5.2 (from fastmcp)
+  Downloading authlib-1.6.3-py2.py3-none-any.whl.metadata (1.6 kB)
+Collecting cyclopts>=3.0.0 (from fastmcp)
+  Downloading cyclopts-3.24.0-py3-none-any.whl.metadata (11 kB)
+Collecting exceptiongroup>=1.2.2 (from fastmcp)
+  Downloading exceptiongroup-1.3.0-py3-none-any.whl.metadata (6.7 kB)
+Requirement already satisfied: httpx>=0.28.1 in /home/ubuntu/.local/lib/python3.13/site-packages (from fastmcp) (0.28.1)
+Requirement already satisfied: mcp<2.0.0,>=1.12.4 in /home/ubuntu/.local/lib/python3.13/site-packages (from fastmcp) (1.13.1)
+Collecting openapi-core>=0.19.5 (from fastmcp)
+  Downloading openapi_core-0.19.5-py3-none-any.whl.metadata (6.6 kB)
+Collecting openapi-pydantic>=0.5.1 (from fastmcp)
+  Downloading openapi_pydantic-0.5.1-py3-none-any.whl.metadata (10 kB)
+Requirement already satisfied: pydantic>=2.11.7 in /home/ubuntu/.local/lib/python3.13/site-packages (from pydantic[email]>=2.11.7->fastmcp) (2.11.7)
+Collecting pyperclip>=1.9.0 (from fastmcp)
+  Downloading pyperclip-1.9.0.tar.gz (20 kB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
