@@ -241,16 +241,35 @@ class MCPServer:
                     if param_info.get('required', False):
                         required_params.append(param_name)
                 
-                tool = Tool(
-                    name=tool_name,
-                    description=api_tool.description,
-                    inputSchema={
+                # Create enhanced tool with API-specific properties
+                tool_dict = {
+                    "name": tool_name,
+                    "description": api_tool.description,
+                    "inputSchema": {
                         "type": "object",
                         "properties": mcp_parameters,
                         "required": required_params,
                         "additionalProperties": False
                     }
-                )
+                }
+                
+                # Add API-specific properties for LLM-based tool selection
+                tool_dict["api_properties"] = {
+                    "method": api_tool.method,
+                    "path": api_tool.path,
+                    "spec_name": api_tool.spec_name,
+                    "tags": api_tool.tags,
+                    "summary": api_tool.summary,
+                    "operation_id": api_tool.operation_id,
+                    "endpoint_url": f"{api_tool.spec_name}_{api_tool.method}_{api_tool.path}",
+                    "category": api_tool.tags[0] if api_tool.tags else "general",
+                    "parameters_count": len(api_tool.parameters),
+                    "required_parameters": required_params,
+                    "optional_parameters": [p for p in api_tool.parameters.keys() if p not in required_params]
+                }
+                
+                # Create Tool object with enhanced properties
+                tool = Tool(**tool_dict)
                 tools.append(tool)
             
             # Add set_credentials tool for authentication

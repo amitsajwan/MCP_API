@@ -31,6 +31,7 @@ A **next-generation** Model Context Protocol (MCP) system that provides modern A
 ### **🤖 Azure 4o Integration**
 - **Intelligent Tool Planning**: Azure OpenAI GPT-4o powered tool selection
 - **CreateOpen API Client**: Advanced AI-driven tool orchestration
+- **Enhanced API Properties**: Rich metadata for better tool selection (method, path, category, tags)
 - **Bearer Token Authentication**: Secure Azure AD token provider support
 - **Fallback Planning**: Graceful degradation to simple keyword-based planning
 - **Context-Aware Responses**: AI understands tool capabilities and user intent

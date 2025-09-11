@@ -61,19 +61,26 @@ Available tools:
 {tools_description}
 
 Instructions:
-1. Analyze the user query carefully
-2. Identify which tools are needed to fulfill the request
-3. Create a logical sequence of tool calls
+1. Analyze the user query carefully and identify the intent
+2. Match the user's intent to the most appropriate tools based on:
+   - Method (GET for reading data, POST for creating, PUT/PATCH for updating, DELETE for removing)
+   - Path patterns (look for relevant endpoints)
+   - Category and tags (group related functionality)
+   - Required parameters (ensure you can provide them)
+3. Create a logical sequence of tool calls considering:
+   - Authentication tools first (set_credentials, perform_login)
+   - Dependencies between tools
+   - Data flow (output from one tool as input to another)
 4. Provide clear reasoning for each tool call
 5. Only suggest tools that are actually available
-6. Consider dependencies between tools (e.g., authentication before API calls)
+6. Use the API properties (method, path, category) to make better tool selections
 
 Return your response as a JSON array of tool calls with this structure:
 [
   {{
     "tool_name": "exact_tool_name",
     "arguments": {{"param1": "value1", "param2": "value2"}},
-    "reason": "Why this tool call is needed"
+    "reason": "Why this tool call is needed based on method, path, and category"
   }}
 ]
 
@@ -145,13 +152,27 @@ If no tools are needed, return an empty array [].
             desc_parts = [f"🔧 {tool_name}"]
             desc_parts.append(f"   Description: {description}")
             
+            # Add API-specific properties if available
+            api_props = tool.get('api_properties', {})
+            if api_props:
+                desc_parts.append(f"   Method: {api_props.get('method', 'N/A')}")
+                desc_parts.append(f"   Path: {api_props.get('path', 'N/A')}")
+                desc_parts.append(f"   Category: {api_props.get('category', 'general')}")
+                if api_props.get('tags'):
+                    desc_parts.append(f"   Tags: {', '.join(api_props['tags'])}")
+                if api_props.get('summary'):
+                    desc_parts.append(f"   Summary: {api_props['summary']}")
+                desc_parts.append(f"   Parameters: {api_props.get('parameters_count', 0)} total")
+                if api_props.get('required_parameters'):
+                    desc_parts.append(f"   Required: {', '.join(api_props['required_parameters'])}")
+            
             # Add schema information
             schema = tool.get('inputSchema', {})
             properties = schema.get('properties', {})
             required = schema.get('required', [])
             
             if properties:
-                desc_parts.append("   Parameters:")
+                desc_parts.append("   Parameter Details:")
                 for prop_name, prop_info in properties.items():
                     prop_type = prop_info.get('type', 'any')
                     prop_desc = prop_info.get('description', '')
