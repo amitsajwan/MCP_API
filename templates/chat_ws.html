@@ -4,868 +4,389 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Modern LLM Tool Capabilities Demo</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            min-height: 100vh;
         }
-
-        .chat-container {
-            width: 90%;
-            max-width: 800px;
-            height: 80vh;
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
             background: white;
-            border-radius: 20px;
+            border-radius: 15px;
             box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            display: flex;
-            flex-direction: column;
             overflow: hidden;
         }
-
-        .chat-header {
+        
+        .header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             padding: 20px;
             text-align: center;
-            position: relative;
         }
-
-        .chat-header h1 {
-            font-size: 24px;
-            font-weight: 600;
+        
+        .header h1 {
+            margin: 0;
+            font-size: 2em;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
         }
-
-        .chat-header p {
-            opacity: 0.9;
-            margin-top: 5px;
+        
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            background: rgba(255,255,255,0.2);
+            font-size: 0.9em;
         }
-
-        .connection-status {
-            position: absolute;
-            top: 10px;
-            right: 20px;
-            padding: 5px 10px;
-            border-radius: 15px;
-            font-size: 12px;
-            font-weight: 600;
+        
+        .chat-container {
+            display: flex;
+            height: 600px;
         }
-
-        .connected {
-            background: rgba(40, 167, 69, 0.2);
-            color: #28a745;
+        
+        .chat-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
         }
-
-        .disconnected {
-            background: rgba(220, 53, 69, 0.2);
-            color: #dc3545;
-        }
-
+        
         .chat-messages {
             flex: 1;
-            padding: 20px;
             overflow-y: auto;
+            padding: 20px;
             background: #f8f9fa;
         }
-
+        
         .message {
-            margin-bottom: 20px;
-            display: flex;
-            align-items: flex-start;
-        }
-
-        .message.user {
-            justify-content: flex-end;
-        }
-
-        .message-content {
+            margin-bottom: 15px;
+            padding: 12px 16px;
+            border-radius: 18px;
             max-width: 70%;
-            padding: 15px 20px;
-            border-radius: 20px;
             word-wrap: break-word;
         }
-
-        .message.user .message-content {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        
+        .user-message {
+            background: #007bff;
             color: white;
-            border-bottom-right-radius: 5px;
+            margin-left: auto;
+            text-align: right;
         }
-
-        .message.bot .message-content {
+        
+        .bot-message {
             background: white;
             color: #333;
-            border: 1px solid #e1e5e9;
-            border-bottom-left-radius: 5px;
+            border: 1px solid #e9ecef;
+            margin-right: auto;
         }
-
-        .message.system .message-content {
-            background: #e3f2fd;
-            color: #1565c0;
-            border: 1px solid #bbdefb;
-            text-align: center;
-            font-style: italic;
-        }
-
-        .message-avatar {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            margin: 0 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
+        
+        .system-message {
+            background: #28a745;
             color: white;
+            margin: 0 auto;
+            text-align: center;
+            font-size: 0.9em;
         }
-
-        .message.user .message-avatar {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        
+        .error-message {
+            background: #dc3545;
+            color: white;
+            margin: 0 auto;
+            text-align: center;
         }
-
-        .message.bot .message-avatar {
-            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        
+        .tool-call {
+            background: #ffc107;
+            color: #333;
+            margin: 5px auto;
+            font-size: 0.9em;
+            max-width: 90%;
         }
-
-        .message.system .message-avatar {
-            background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%);
+        
+        .capabilities {
+            background: #17a2b8;
+            color: white;
+            margin: 5px auto;
+            font-size: 0.9em;
+            max-width: 90%;
         }
-
-        .chat-input-container {
+        
+        .chat-input {
             padding: 20px;
             background: white;
-            border-top: 1px solid #e1e5e9;
-        }
-
-        .chat-input-wrapper {
+            border-top: 1px solid #e9ecef;
             display: flex;
             gap: 10px;
         }
-
-        .chat-input {
+        
+        .chat-input input {
             flex: 1;
-            padding: 15px 20px;
-            border: 2px solid #e1e5e9;
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
             border-radius: 25px;
             font-size: 16px;
             outline: none;
             transition: border-color 0.3s;
         }
-
-        .chat-input:focus {
-            border-color: #667eea;
+        
+        .chat-input input:focus {
+            border-color: #007bff;
         }
-
-        .send-button {
-            padding: 15px 25px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        
+        .chat-input button {
+            padding: 12px 24px;
+            background: #007bff;
             color: white;
             border: none;
             border-radius: 25px;
-            font-size: 16px;
-            font-weight: 600;
             cursor: pointer;
-            transition: transform 0.2s;
+            font-size: 16px;
+            transition: background-color 0.3s;
         }
-
-        .send-button:hover {
-            transform: translateY(-2px);
+        
+        .chat-input button:hover {
+            background: #0056b3;
         }
-
-        .send-button:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .typing-indicator {
-            display: none;
-            padding: 15px 20px;
-            background: white;
-            border: 1px solid #e1e5e9;
-            border-radius: 20px;
-            border-bottom-left-radius: 5px;
-            margin-bottom: 20px;
-            max-width: 70%;
-        }
-
-        .typing-indicator.show {
-            display: block;
-        }
-
-        .typing-dots {
-            display: inline-block;
-        }
-
-        .typing-dots::after {
-            content: '';
-            animation: typing 1.5s infinite;
-        }
-
-        @keyframes typing {
-            0%, 20% { content: ''; }
-            40% { content: '.'; }
-            60% { content: '..'; }
-            80%, 100% { content: '...'; }
-        }
-
-        .error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-            padding: 15px 20px;
-            border-radius: 20px;
-            margin-bottom: 20px;
-        }
-
-        .tool-call {
-            background: #e3f2fd;
-            border: 1px solid #bbdefb;
-            padding: 10px 15px;
-            border-radius: 10px;
-            margin: 10px 0;
-            font-size: 14px;
-            color: #1565c0;
-        }
-
-        .tool-call.error {
-            background: #ffebee;
-            border-color: #ffcdd2;
-            color: #c62828;
-        }
-
-        .capabilities-demo {
+        
+        .sidebar {
+            width: 300px;
             background: #f8f9fa;
-            border-left: 4px solid #007bff;
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 0 8px 8px 0;
-        }
-
-        .capability-indicator {
-            display: inline-block;
-            padding: 5px 12px;
-            margin: 3px;
-            border-radius: 15px;
-            font-size: 12px;
-            font-weight: 600;
-            background: #e3f2fd;
-            color: #1565c0;
-            border: 1px solid #bbdefb;
-        }
-
-        .capability-indicator.active {
-            background: #c8e6c9;
-            color: #2e7d32;
-            border-color: #a5d6a7;
-        }
-
-        .tool-chain {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin: 10px 0;
-            padding: 10px;
-            background: #f5f5f5;
-            border-radius: 8px;
-            flex-wrap: wrap;
-        }
-
-        .tool-chain-item {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            padding: 5px 10px;
-            background: white;
-            border-radius: 15px;
-            border: 1px solid #ddd;
-        }
-
-        .tool-chain-arrow {
-            color: #666;
-            font-weight: bold;
-        }
-
-        .tools-panel {
-            position: absolute;
-            top: 60px;
-            right: 20px;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-            padding: 15px;
-            max-width: 300px;
-            max-height: 200px;
+            border-left: 1px solid #e9ecef;
+            padding: 20px;
             overflow-y: auto;
-            display: none;
         }
-
-        .tools-panel.show {
-            display: block;
-        }
-
-        .tool-item {
-            padding: 5px 0;
-            border-bottom: 1px solid #eee;
-            font-size: 12px;
-        }
-
-        .tool-item:last-child {
-            border-bottom: none;
-        }
-
-        .config-dialog {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.8);
-            display: none;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-        }
-
-        .config-dialog.show {
-            display: flex;
-        }
-
-        .config-form {
+        
+        .credentials-form {
             background: white;
-            padding: 30px;
-            border-radius: 15px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.3);
-            min-width: 400px;
-            max-width: 500px;
-        }
-
-        .config-form h3 {
-            margin: 0 0 20px 0;
-            color: #333;
-            text-align: center;
-        }
-
-        .form-group {
+            padding: 15px;
+            border-radius: 10px;
             margin-bottom: 20px;
+            border: 1px solid #e9ecef;
         }
-
+        
+        .credentials-form h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
         .form-group label {
             display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
+            margin-bottom: 5px;
+            font-weight: 500;
             color: #555;
         }
-
+        
         .form-group input {
             width: 100%;
-            padding: 12px 15px;
-            border: 2px solid #e1e5e9;
-            border-radius: 8px;
-            font-size: 16px;
-            transition: border-color 0.3s;
-        }
-
-        .form-group input:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
-        .form-actions {
-            display: flex;
-            gap: 10px;
-            justify-content: flex-end;
-            margin-top: 25px;
-        }
-
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            transform: translateY(-2px);
-        }
-
-        .btn-secondary {
-            background: #f8f9fa;
-            color: #666;
-            border: 1px solid #e1e5e9;
-        }
-
-        .btn-secondary:hover {
-            background: #e9ecef;
-        }
-
-        .status-message {
-            padding: 10px 15px;
-            margin: 10px 0;
-            border-radius: 8px;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
             font-size: 14px;
-            animation: fadeIn 0.3s ease-in;
         }
-
-        .status-message.success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+        
+        .btn {
+            background: #28a745;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
         }
-
-        .status-message.error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+        
+        .btn:hover {
+            background: #218838;
         }
-
-        .status-message.info {
-            background: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
+        
+        .tools-list {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #e9ecef;
         }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
+        
+        .tools-list h3 {
+            margin-top: 0;
+            color: #333;
         }
-
-        .config-status {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 15px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-
-        .config-status.configured {
-            background: rgba(40, 167, 69, 0.2);
-            color: #28a745;
-        }
-
-        .config-status.not-configured {
-            background: rgba(220, 53, 69, 0.2);
-            color: #dc3545;
+        
+        .typing {
+            font-style: italic;
+            color: #666;
         }
     </style>
 </head>
 <body>
-    <div class="chat-container">
-        <div class="chat-header">
-            <div class="connection-status disconnected" id="connectionStatus">
-                Disconnected
-            </div>
-            <div class="config-status not-configured" id="configStatus">
-                🔐 Not Configured
-            </div>
-            <h1>🚀 Modern LLM Tool Capabilities</h1>
-            <p>Intelligent • Adaptive • Chaining • Error Handling • Reasoning</p>
-            <div class="tools-panel" id="toolsPanel">
-                <div style="font-weight: 600; margin-bottom: 10px;">Available Tools:</div>
-                <div id="toolsList">Loading...</div>
-            </div>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Modern LLM Tool Capabilities Demo</h1>
+            <div class="status" id="status">Connecting...</div>
         </div>
         
-        <div class="chat-messages" id="chatMessages">
-            <div class="message system">
-                <div class="message-avatar">🔌</div>
-                <div class="message-content">
-                    Connecting to Modern LLM Bot...
+        <div class="chat-container">
+            <div class="chat-main">
+                <div class="chat-messages" id="messages"></div>
+                <div class="chat-input">
+                    <input type="text" id="messageInput" placeholder="Ask me anything..." onkeypress="handleKeyPress(event)">
+                    <button onclick="sendMessage()">Send</button>
                 </div>
             </div>
-        </div>
-        
-        <div class="typing-indicator" id="typingIndicator">
-            <div class="typing-dots">Bot is thinking</div>
-        </div>
-        
-        <div class="chat-input-container">
-            <div class="chat-input-wrapper">
-                <input 
-                    type="text" 
-                    id="chatInput" 
-                    class="chat-input" 
-                    placeholder="Try: 'Check my account balance and recent transactions'"
-                    autocomplete="off"
-                    disabled
-                >
-                <button id="sendButton" class="send-button" disabled>Send</button>
+            
+            <div class="sidebar">
+                <div class="credentials-form">
+                    <h3>🔐 API Credentials</h3>
+                    <div class="form-group">
+                        <label>Username:</label>
+                        <input type="text" id="username" placeholder="API Username">
+                    </div>
+                    <div class="form-group">
+                        <label>Password:</label>
+                        <input type="password" id="password" placeholder="API Password">
+                    </div>
+                    <div class="form-group">
+                        <label>API Key Name:</label>
+                        <input type="text" id="apiKeyName" placeholder="X-API-Key">
+                    </div>
+                    <div class="form-group">
+                        <label>API Key Value:</label>
+                        <input type="password" id="apiKeyValue" placeholder="Your API Key">
+                    </div>
+                    <div class="form-group">
+                        <label>Login URL:</label>
+                        <input type="text" id="loginUrl" placeholder="http://localhost:8080/auth/login">
+                    </div>
+                    <div class="form-group">
+                        <label>Base URL:</label>
+                        <input type="text" id="baseUrl" placeholder="http://localhost:8080">
+                    </div>
+                    <button class="btn" onclick="setCredentials()">Set Credentials</button>
+                </div>
+                
+                <div class="tools-list">
+                    <h3>🔧 Available Tools</h3>
+                    <div id="toolsList">Loading...</div>
+                    <button class="btn" onclick="loadTools()">Refresh Tools</button>
+                </div>
             </div>
-        </div>
-    </div>
-
-    <!-- Configuration Dialog -->
-    <div class="config-dialog" id="configDialog">
-        <div class="config-form">
-            <h3>🔐 Configure API Credentials</h3>
-            <form id="configForm">
-                <div class="form-group">
-                    <label for="configUsername">Username</label>
-                    <input type="text" id="configUsername" required>
-                </div>
-                <div class="form-group">
-                    <label for="configPassword">Password</label>
-                    <input type="password" id="configPassword" required>
-                </div>
-                <div class="form-group">
-                    <label for="configApiKeyName">API Key Name (Optional)</label>
-                    <input type="text" id="configApiKeyName" placeholder="X-API-Key">
-                </div>
-                <div class="form-group">
-                    <label for="configApiKeyValue">API Key Value (Optional)</label>
-                    <input type="text" id="configApiKeyValue" placeholder="your-api-key">
-                </div>
-                <div class="form-group">
-                    <label for="configLoginUrl">Login URL (Required for Session ID)</label>
-                    <input type="text" id="configLoginUrl" placeholder="https://your-api.com/login" required>
-                    <small style="color: #666; font-size: 12px;">Used to get JSESSIONID for API authentication</small>
-                </div>
-                <div class="form-group">
-                    <label for="configBaseUrl">Base URL (Optional)</label>
-                    <input type="text" id="configBaseUrl" placeholder="https://your-api.com">
-                </div>
-                <div class="form-actions">
-                    <button type="button" class="btn btn-secondary" id="configCancel">Cancel</button>
-                    <button type="submit" class="btn btn-primary" id="configSave">Save & Test</button>
-                </div>
-            </form>
         </div>
     </div>
 
     <script>
         const socket = io();
-        const chatMessages = document.getElementById('chatMessages');
-        const chatInput = document.getElementById('chatInput');
-        const sendButton = document.getElementById('sendButton');
-        const typingIndicator = document.getElementById('typingIndicator');
-        const connectionStatus = document.getElementById('connectionStatus');
-        const toolsPanel = document.getElementById('toolsPanel');
-        const toolsList = document.getElementById('toolsList');
-        const configStatus = document.getElementById('configStatus');
-        const configDialog = document.getElementById('configDialog');
-        const configForm = document.getElementById('configForm');
-
-        let isConnected = false;
-        let isConfigured = false;
-
-        // Socket event handlers
+        
         socket.on('connect', function() {
-            isConnected = true;
-            connectionStatus.textContent = 'Connected';
-            connectionStatus.className = 'connection-status connected';
-            chatInput.disabled = false;
-            sendButton.disabled = false;
-            chatInput.focus();
-            
-            // Request available tools
-            socket.emit('get_tools');
+            addMessage('system', 'Connected to server');
         });
-
-        socket.on('disconnect', function() {
-            isConnected = false;
-            connectionStatus.textContent = 'Disconnected';
-            connectionStatus.className = 'connection-status disconnected';
-            chatInput.disabled = true;
-            sendButton.disabled = true;
-        });
-
+        
         socket.on('connected', function(data) {
-            addSystemMessage(data.message);
+            updateStatus('🟢 ' + data.message);
         });
-
+        
+        socket.on('credentials_status', function(data) {
+            updateStatus('🔐 ' + data.message);
+        });
+        
         socket.on('user_message', function(data) {
-            addMessage(data.message, true);
+            addMessage('user', data.message);
         });
-
+        
         socket.on('bot_message', function(data) {
-            hideTyping();
-            addMessage(data.message, false);
+            addMessage('bot', data.message);
         });
-
-        socket.on('tool_call', function(data) {
-            addToolCall(data);
-        });
-
-        socket.on('capabilities_demonstrated', function(data) {
-            addCapabilitiesDemo(data.capabilities);
-        });
-
+        
         socket.on('system_message', function(data) {
-            addSystemMessage(data.message);
+            addMessage('system', data.message);
         });
-
+        
         socket.on('error', function(data) {
-            addError(data.message);
-            hideTyping();
+            addMessage('error', data.message);
         });
-
+        
+        socket.on('tool_call', function(data) {
+            const toolMsg = `🔧 Tool: ${data.tool_name}`;
+            addMessage('tool', toolMsg);
+        });
+        
+        socket.on('capabilities_demonstrated', function(data) {
+            const capMsg = `✨ Capabilities: ${data.capabilities.descriptions.join(', ')}`;
+            addMessage('capabilities', capMsg);
+        });
+        
         socket.on('tools_list', function(data) {
             displayTools(data.tools);
         });
-
-        socket.on('credentials_status', function(data) {
-            updateConfigStatus(data.configured, data.message);
-        });
-
-        // UI functions
-        function addMessage(content, isUser = false) {
+        
+        function addMessage(type, message) {
+            const messagesDiv = document.getElementById('messages');
             const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${isUser ? 'user' : 'bot'}`;
-            
-            const avatar = document.createElement('div');
-            avatar.className = 'message-avatar';
-            avatar.textContent = isUser ? '👤' : '🤖';
-            
-            const messageContent = document.createElement('div');
-            messageContent.className = 'message-content';
-            messageContent.textContent = content;
-            
-            messageDiv.appendChild(avatar);
-            messageDiv.appendChild(messageContent);
-            chatMessages.appendChild(messageDiv);
-            
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+            messageDiv.className = `message ${type}-message`;
+            messageDiv.textContent = message;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
-
-        function addSystemMessage(message) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'message system';
-            
-            const avatar = document.createElement('div');
-            avatar.className = 'message-avatar';
-            avatar.textContent = '🔌';
-            
-            const messageContent = document.createElement('div');
-            messageContent.className = 'message-content';
-            messageContent.textContent = message;
-            
-            messageDiv.appendChild(avatar);
-            messageDiv.appendChild(messageContent);
-            chatMessages.appendChild(messageDiv);
-            
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+        
+        function updateStatus(status) {
+            document.getElementById('status').textContent = status;
         }
-
-        function addError(message) {
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'error';
-            errorDiv.textContent = message;
-            chatMessages.appendChild(errorDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-        }
-
-        function addToolCall(data) {
-            const toolDiv = document.createElement('div');
-            toolDiv.className = `tool-call ${data.error ? 'error' : ''}`;
-            
-            if (data.error) {
-                toolDiv.innerHTML = `
-                    <strong>🔧 ${data.tool_name}</strong><br>
-                    <em>Error: ${data.error}</em>
-                `;
-            } else {
-                toolDiv.innerHTML = `
-                    <strong>🔧 ${data.tool_name}</strong><br>
-                    <em>Args: ${JSON.stringify(data.args)}</em>
-                `;
+        
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const message = input.value.trim();
+            if (message) {
+                socket.emit('message', {message: message});
+                input.value = '';
             }
-            
-            chatMessages.appendChild(toolDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
-
-        function addCapabilitiesDemo(capabilities) {
-            const capabilitiesDiv = document.createElement('div');
-            capabilitiesDiv.className = 'capabilities-demo';
-            
-            const activeCapabilities = capabilities.descriptions || [];
-            const toolCount = capabilities.tool_count || 0;
-            const successRate = Math.round((capabilities.success_rate || 0) * 100);
-            
-            capabilitiesDiv.innerHTML = `
-                <div style="font-weight: 600; margin-bottom: 10px;">
-                    🎯 Modern LLM Capabilities Demonstrated
-                </div>
-                <div style="margin-bottom: 10px;">
-                    ${activeCapabilities.map(cap => `<span class="capability-indicator active">${cap}</span>`).join('')}
-                </div>
-                <div style="font-size: 12px; color: #666;">
-                    Tools Used: ${toolCount} | Success Rate: ${successRate}%
-                </div>
-            `;
-            
-            chatMessages.appendChild(capabilitiesDiv);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
+        
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
         }
-
+        
+        function setCredentials() {
+            const credentials = {
+                username: document.getElementById('username').value,
+                password: document.getElementById('password').value,
+                api_key_name: document.getElementById('apiKeyName').value,
+                api_key_value: document.getElementById('apiKeyValue').value,
+                login_url: document.getElementById('loginUrl').value,
+                base_url: document.getElementById('baseUrl').value
+            };
+            socket.emit('set_credentials', credentials);
+        }
+        
+        function loadTools() {
+            socket.emit('get_tools');
+        }
+        
         function displayTools(tools) {
+            const toolsDiv = document.getElementById('toolsList');
             if (tools.length === 0) {
-                toolsList.innerHTML = 'No tools available';
+                toolsDiv.innerHTML = 'No tools available';
                 return;
             }
             
-            toolsList.innerHTML = tools.map(tool => 
-                `<div class="tool-item">
+            toolsDiv.innerHTML = tools.map(tool => 
+                `<div style="margin-bottom: 10px; padding: 8px; background: #f8f9fa; border-radius: 5px; font-size: 12px;">
                     <strong>${tool.function.name}</strong><br>
-                    <em>${tool.function.description || 'No description'}</em>
+                    <small>${tool.function.description}</small>
                 </div>`
             ).join('');
         }
-
-        function showTyping() {
-            typingIndicator.classList.add('show');
-        }
-
-        function hideTyping() {
-            typingIndicator.classList.remove('show');
-        }
-
-        function sendMessage() {
-            const message = chatInput.value.trim();
-            if (!message || !isConnected) return;
-
-            chatInput.value = '';
-            showTyping();
-            
-            socket.emit('message', { message: message });
-        }
-
-        // Event listeners
-        sendButton.addEventListener('click', sendMessage);
-        chatInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
-        });
-
-        // Configuration functions
-        function updateConfigStatus(configured, message = '') {
-            isConfigured = configured;
-            if (configured) {
-                // Extract session ID from message if available
-                const sessionMatch = message.match(/Session ID: ([A-F0-9-]+)/i);
-                if (sessionMatch) {
-                    configStatus.textContent = `🔐 Authenticated (${sessionMatch[1].substring(0, 8)}...)`;
-                } else {
-                    configStatus.textContent = '🔐 Authenticated';
-                }
-                configStatus.className = 'config-status configured';
-                if (message) {
-                    showStatusMessage(message, 'success');
-                }
-            } else {
-                configStatus.textContent = '🔐 Not Configured';
-                configStatus.className = 'config-status not-configured';
-                if (message) {
-                    showStatusMessage(message, 'error');
-                }
-            }
-        }
-
-        function showStatusMessage(message, type = 'info') {
-            // Remove existing status messages
-            const existingMessages = document.querySelectorAll('.status-message');
-            existingMessages.forEach(msg => msg.remove());
-            
-            // Create new status message
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `status-message ${type}`;
-            messageDiv.textContent = message;
-            
-            // Insert after config status
-            const statusElement = document.getElementById('configStatus');
-            statusElement.parentNode.insertBefore(messageDiv, statusElement.nextSibling);
-            
-            // Auto-remove after 5 seconds
-            setTimeout(() => {
-                if (messageDiv.parentNode) {
-                    messageDiv.remove();
-                }
-            }, 5000);
-        }
-
-        function showConfigDialog() {
-            configDialog.classList.add('show');
-        }
-
-        function hideConfigDialog() {
-            configDialog.classList.remove('show');
-        }
-
-        // Configuration event handlers
-        configStatus.addEventListener('click', () => {
-            if (!isConfigured) {
-                showConfigDialog();
-            }
-        });
-
-        document.getElementById('configCancel').addEventListener('click', () => {
-            hideConfigDialog();
-        });
-
-        configForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            
-            const credentials = {
-                username: document.getElementById('configUsername').value.trim(),
-                password: document.getElementById('configPassword').value.trim(),
-                api_key_name: document.getElementById('configApiKeyName').value.trim(),
-                api_key_value: document.getElementById('configApiKeyValue').value.trim(),
-                login_url: document.getElementById('configLoginUrl').value.trim(),
-                base_url: document.getElementById('configBaseUrl').value.trim()
-            };
-
-            try {
-                addSystemMessage('Setting credentials...');
-                showStatusMessage('Setting credentials...', 'info');
-                
-                // Send credentials to server
-                socket.emit('set_credentials', credentials);
-                
-            } catch (err) {
-                addError('Configuration error: ' + err.message);
-                showStatusMessage('Configuration failed: ' + err.message, 'error');
-            }
-        });
-
-        // Toggle tools panel
-        connectionStatus.addEventListener('click', () => {
-            toolsPanel.classList.toggle('show');
-        });
-
-        // Close tools panel when clicking outside
-        document.addEventListener('click', (e) => {
-            if (!toolsPanel.contains(e.target) && !connectionStatus.contains(e.target)) {
-                toolsPanel.classList.remove('show');
-            }
-        });
-
-        // Close config dialog when clicking outside
-        configDialog.addEventListener('click', (e) => {
-            if (e.target === configDialog) {
-                hideConfigDialog();
-            }
-        });
+        
+        // Load tools on page load
+        window.onload = function() {
+            setTimeout(loadTools, 2000);
+        };
     </script>
 </body>
 </html>
