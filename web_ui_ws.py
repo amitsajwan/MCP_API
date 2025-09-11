@@ -25,7 +25,7 @@ def index():
     return render_template('chat_ws.html')
 
 @socketio.on('connect')
-def handle_connect():
+def handle_connect(auth=None):
     """Handle client connection"""
     session_id = request.sid
     conversations[session_id] = []
