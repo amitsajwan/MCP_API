@@ -48,7 +48,7 @@ class Config:
     
     # Azure OpenAI Configuration
     AZURE_OPENAI_ENDPOINT: Optional[str] = os.getenv('AZURE_OPENAI_ENDPOINT')
-    AZURE_OPENAI_DEPLOYMENT: str = os.getenv('AZURE_OPENAI_DEPLOYMENT', 'gpt-4')
+    AZURE_OPENAI_DEPLOYMENT: str = os.getenv('AZURE_OPENAI_DEPLOYMENT', 'gpt-4o')
     AZURE_OPENAI_API_VERSION: str = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
     
     # Azure AD Token Provider Configuration
@@ -57,6 +57,11 @@ class Config:
     
     # Legacy API Key Configuration (only used if USE_AZURE_AD_TOKEN_PROVIDER=false)
     AZURE_OPENAI_API_KEY: Optional[str] = os.getenv('AZURE_OPENAI_API_KEY')
+    
+    # Azure 4o Tool Planning Configuration
+    ENABLE_AZURE_4O_PLANNING: bool = os.getenv('ENABLE_AZURE_4O_PLANNING', 'true').lower() == 'true'
+    AZURE_4O_TEMPERATURE: float = float(os.getenv('AZURE_4O_TEMPERATURE', '0.1'))
+    AZURE_4O_MAX_TOKENS: int = int(os.getenv('AZURE_4O_MAX_TOKENS', '2000'))
     
     # Authentication Configuration
     DEFAULT_LOGIN_URL: str = os.getenv('DEFAULT_LOGIN_URL', 'http://api.company.com/login')

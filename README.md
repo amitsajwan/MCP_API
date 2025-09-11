@@ -28,6 +28,13 @@ A **next-generation** Model Context Protocol (MCP) system that provides modern A
 - **Cross-System Correlation**: Connect data across multiple financial APIs
 - **Predictive Alerts**: Proactive warnings about upcoming deadlines
 
+### **🤖 Azure 4o Integration**
+- **Intelligent Tool Planning**: Azure OpenAI GPT-4o powered tool selection
+- **CreateOpen API Client**: Advanced AI-driven tool orchestration
+- **Bearer Token Authentication**: Secure Azure AD token provider support
+- **Fallback Planning**: Graceful degradation to simple keyword-based planning
+- **Context-Aware Responses**: AI understands tool capabilities and user intent
+
 ## 🏗️ **Enhanced System Architecture**
 
 ```
@@ -192,9 +199,14 @@ Edit `.env` with your Azure OpenAI credentials:
 ```env
 # Required: Azure OpenAI Configuration
 AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_DEPLOYMENT=gpt-4
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
 AZURE_OPENAI_API_KEY=your-api-key-here
 AZURE_OPENAI_API_VERSION=2024-02-15-preview
+
+# Azure 4o Tool Planning (Optional)
+ENABLE_AZURE_4O_PLANNING=true
+AZURE_4O_TEMPERATURE=0.1
+AZURE_4O_MAX_TOKENS=2000
 
 # Optional: Default API Credentials
 API_USERNAME=your-api-username

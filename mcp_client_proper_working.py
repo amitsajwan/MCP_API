@@ -25,11 +25,20 @@ except ImportError:
         LOG_LEVEL = "INFO"
         MCP_SERVER_SCRIPT = "mcp_server.py"
         MCP_SERVER_ARGS = ["--transport", "stdio"]
+        ENABLE_AZURE_4O_PLANNING = False
         
         def validate(self):
             return True
     
     config = DefaultConfig()
+
+# Import Azure OpenAI client
+try:
+    from azure_openai_client import azure_client
+    AZURE_AVAILABLE = True
+except ImportError:
+    AZURE_AVAILABLE = False
+    azure_client = None
 
 # Configure logging
 logging.basicConfig(
@@ -345,8 +354,8 @@ class ProperMCPClient:
         if not self.available_tools:
             await self.list_tools()
 
-        # Simple planning based on keywords
-        tool_calls = self._simple_plan(user_query)
+        # Azure 4o powered intelligent planning
+        tool_calls = await self._azure_4o_plan(user_query)
         if not tool_calls:
             summary = "No suitable tools found for this request."
             return {"status": "ok", "plan": [], "results": [], "summary": summary}
@@ -364,8 +373,44 @@ class ProperMCPClient:
             "summary": summary,
         }
     
-    def _simple_plan(self, user_query: str) -> List[ToolCall]:
-        """Simple planning based on keywords."""
+    async def _azure_4o_plan(self, user_query: str) -> List[ToolCall]:
+        """Azure 4o powered intelligent tool planning."""
+        try:
+            if not AZURE_AVAILABLE or not azure_client:
+                logger.warning("Azure 4o not available, falling back to simple planning")
+                return self._simple_plan_fallback(user_query)
+            
+            if not getattr(config, 'ENABLE_AZURE_4O_PLANNING', False):
+                logger.info("Azure 4o planning disabled, using simple planning")
+                return self._simple_plan_fallback(user_query)
+            
+            # Convert MCP tools to the format expected by Azure client
+            available_tools = []
+            for tool in self.available_tools:
+                tool_dict = {
+                    'name': tool.name,
+                    'description': tool.description,
+                    'inputSchema': tool.inputSchema
+                }
+                available_tools.append(tool_dict)
+            
+            # Use Azure 4o for intelligent planning
+            tool_calls = await azure_client.create_tool_plan(user_query, available_tools)
+            
+            if tool_calls:
+                logger.info(f"Azure 4o created {len(tool_calls)} tool calls")
+                return tool_calls
+            else:
+                logger.warning("Azure 4o returned no tool calls, falling back to simple planning")
+                return self._simple_plan_fallback(user_query)
+                
+        except Exception as e:
+            logger.error(f"Error in Azure 4o planning: {e}")
+            logger.info("Falling back to simple planning")
+            return self._simple_plan_fallback(user_query)
+    
+    def _simple_plan_fallback(self, user_query: str) -> List[ToolCall]:
+        """Fallback simple planning based on keywords."""
         query_lower = user_query.lower()
         tool_calls = []
         
