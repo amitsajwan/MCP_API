@@ -76,6 +76,7 @@ class FastMCPClientWrapper:
         ] + config.MCP_SERVER_ARGS
         self.available_tools: List[Dict[str, Any]] = []
         self.client: Optional[Client] = None
+        self.client_context = None
         self.connected = False
         
         # Enhanced configuration
@@ -88,11 +89,23 @@ class FastMCPClientWrapper:
     async def __aenter__(self):
         """Async context manager entry."""
         await self.connect()
+        if self.client:
+            # Enter the FastMCP client's async context manager
+            self.client_context = self.client.__aenter__()
+            await self.client_context
+            # Load available tools
+            await self._load_tools()
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
-        await self.disconnect()
+        try:
+            if self.client_context:
+                await self.client.__aexit__(exc_type, exc_val, exc_tb)
+        except Exception as e:
+            logger.error(f"Error exiting FastMCP client context: {e}")
+        finally:
+            self.connected = False
     
     async def connect(self) -> bool:
         """Connect to FastMCP server using stdio transport."""
@@ -100,32 +113,39 @@ class FastMCPClientWrapper:
             if self.connected:
                 logger.info("Already connected to FastMCP server")
                 return True
-                
+            
             # Create FastMCP client with stdio transport
-            from fastmcp import FastMCP
-            server = FastMCP("mcp-server")
-            self.client = Client(transport=server)
+            from fastmcp import Client
+            from fastmcp.client.transports import StdioTransport
             
-            # Connect to server
-            await self.client.connect()
+            # Create stdio transport
+            transport = StdioTransport(
+                command=self.server_command[0],
+                args=self.server_command[1:],
+                env=os.environ.copy()
+            )
             
-            # Load available tools
-            await self._load_tools()
+            # Create client with stdio transport
+            self.client = Client(transport=transport)
             
+            # FastMCP 2.0 Client uses async context manager, so we need to enter it
+            # This will be handled by the __aenter__ method
             self.connected = True
-            logger.info(f"✅ Connected to FastMCP server with {len(self.available_tools)} tools")
+            logger.info(f"✅ FastMCP client created with stdio transport")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Failed to connect to FastMCP server: {e}")
+            logger.error(f"❌ Failed to create FastMCP client: {e}")
             self.connected = False
             return False
     
     async def disconnect(self):
         """Disconnect from the FastMCP server."""
         try:
-            if self.client:
-                await self.client.disconnect()
+            if self.client_context:
+                await self.client.__aexit__(None, None, None)
+                self.client_context = None
+            
             self.connected = False
             logger.info("Disconnected from FastMCP server")
         except Exception as e:
@@ -139,7 +159,12 @@ class FastMCPClientWrapper:
                 
             # Get tools from FastMCP server
             tools_response = await self.client.list_tools()
-            self.available_tools = tools_response.get('tools', [])
+            
+            # FastMCP 2.0 returns a list of tools directly, not a dict
+            if isinstance(tools_response, list):
+                self.available_tools = [tool.model_dump() if hasattr(tool, 'model_dump') else (tool.dict() if hasattr(tool, 'dict') else tool) for tool in tools_response]
+            else:
+                self.available_tools = tools_response.get('tools', []) if isinstance(tools_response, dict) else []
             
             logger.info(f"✅ Loaded {len(self.available_tools)} tools from FastMCP server")
             return self.available_tools
@@ -216,11 +241,11 @@ class FastMCPClientWrapper:
                 # Call tool using FastMCP 2.0 protocol
                 result = await self.client.call_tool(tool_name, arguments)
                 
-                # Extract content from FastMCP result
-                if isinstance(result, dict) and 'content' in result:
-                    content_text = result['content']
-                elif isinstance(result, str):
+                # FastMCP 2.0 returns the result directly, not wrapped in a dict
+                if isinstance(result, str):
                     content_text = result
+                elif isinstance(result, dict):
+                    content_text = result.get('content', str(result))
                 else:
                     content_text = str(result)
                 
