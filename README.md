@@ -144,6 +144,84 @@ The MCP server provides tools for:
 - **Mailbox API**: Message management, notifications
 - **Securities API**: Portfolio management, trading
 
+## 🚀 **Direct Usage (Without Demo Mode)**
+
+### **Method 1: Start MCP Server Only**
+
+Run the MCP server directly to expose all 51 tools:
+
+```bash
+# Start the MCP server
+python mcp_server_fastmcp2.py --transport stdio
+```
+
+This will:
+- Load all 4 OpenAPI specifications
+- Register 51 tools (49 OpenAPI + 2 auth)
+- Start the server on stdio transport
+- Show all available tools and their schemas
+
+### **Method 2: Start Web UI Only**
+
+Run the web interface without the demo launcher:
+
+```bash
+# Start the web UI directly
+python web_ui_ws.py
+```
+
+Then open `http://localhost:5000` in your browser.
+
+### **Method 3: Use MCP Client Directly**
+
+Use the MCP client to interact with tools programmatically:
+
+```bash
+# Run a single query
+python mcp_client.py "Get all pending payments" --server "python mcp_server_fastmcp2.py --transport stdio"
+
+# Or use the modern LLM service
+python modern_llm_demo.py "Show me cash summary for today"
+```
+
+### **Method 4: Custom Integration**
+
+Use the MCP service in your own code:
+
+```python
+from mcp_service import ModernLLMService
+
+# Initialize the service
+service = ModernLLMService()
+await service.initialize()
+
+# Use the service
+result = await service.process_message("Get all pending payments")
+print(result["response"])
+
+# Clean up
+await service.cleanup()
+```
+
+### **Method 5: Direct MCP Server Integration**
+
+Connect to the MCP server from your own application:
+
+```python
+from mcp_client import MCPClient, PythonStdioTransport
+
+# Connect to MCP server
+transport = PythonStdioTransport("mcp_server_fastmcp2.py", args=["--transport", "stdio"])
+async with MCPClient(transport) as mcp:
+    # List available tools
+    tools = await mcp.list_tools()
+    print(f"Available tools: {len(tools)}")
+    
+    # Call a specific tool
+    result = await mcp.call_tool("cash_api_getPayments", {"status": "pending"})
+    print(result)
+```
+
 ## 🚨 **Troubleshooting**
 
 ### **Common Issues**
