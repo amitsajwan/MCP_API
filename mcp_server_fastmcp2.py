@@ -373,20 +373,20 @@ class FastMCP2Server:
                     param_signature.append(f"{param_name}=None")
             
             # Create function code with proper signature
-            func_code = f"""async def api_tool_function({', '.join(param_signature)}) -> str:
+            func_code = f"""async def api_tool_function(self, {', '.join(param_signature)}) -> str:
     try:
         # Collect all non-None arguments
         arguments = {{}}
 {chr(10).join([f'        if {param} is not None: arguments["{param}"] = {param}' for param in param_names])}
         
-        logger.info(f"Executing FastMCP 2.0 tool: {{tool_name}} with arguments: {{list(arguments.keys())}}")
+        logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {{list(arguments.keys())}}")
         
         # Get tool info from mapping
-        tool_info = self.tool_name_mapping[tool_name]
+        tool_info = self.tool_name_mapping["{tool_name}"]
         
         # Execute the tool
         result = self._execute_tool(
-            tool_name, 
+            "{tool_name}", 
             tool_info['spec_name'], 
             tool_info['method'], 
             tool_info['path'], 
@@ -396,34 +396,37 @@ class FastMCP2Server:
         
         if result.get("status") == "success":
             response_text = json.dumps(result.get("data", result), indent=2)
-            logger.info(f"Tool {{tool_name}} executed successfully")
+            logger.info(f"Tool {tool_name} executed successfully")
             return response_text
         else:
             error_msg = f"Tool execution failed: {{result.get('message', 'Unknown error')}}"
             if result.get('status_code'):
                 error_msg += f" (HTTP {{result['status_code']}})"
-            logger.error(f"Tool {{tool_name}} failed: {{error_msg}}")
+            logger.error(f"Tool {tool_name} failed: {{error_msg}}")
             return error_msg
             
     except Exception as e:
-        logger.error(f"Error executing tool {{tool_name}}: {{e}}", exc_info=True)
+        logger.error(f"Error executing tool {tool_name}: {{e}}", exc_info=True)
         return f"Error: {{str(e)}}"
 """
             
             # Create the function dynamically
-            local_vars = {'self': self, 'logger': logger, 'json': json, 'tool_name': tool_name}
+            local_vars = {'logger': logger, 'json': json, 'tool_name': tool_name}
             exec(func_code, globals(), local_vars)
             return local_vars['api_tool_function']
         
         # Create the tool function
         tool_func = create_tool_function(tool_name)
         
+        # Bind the function to the instance
+        bound_tool_func = tool_func.__get__(self, self.__class__)
+        
         # Register with FastMCP 2.0 using the correct schema format
         app.tool(
             name=tool_name, 
             description=tool_description,
             annotations={"input_schema": input_schema}
-        )(tool_func)
+        )(bound_tool_func)
         
         # Log with length info
         logger.debug(f"🔧 Registered tool: {tool_name} (len={len(tool_name)}) -> {method} {path}")
