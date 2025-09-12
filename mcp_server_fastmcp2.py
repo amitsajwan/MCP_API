@@ -14,7 +14,7 @@ import asyncio
 import argparse
 import hashlib
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 import requests
 from dataclasses import dataclass
 
@@ -32,6 +32,7 @@ except ImportError:
         MOCK_ALL = False
         MOCK_API_BASE_URL = "http://localhost:8080"
         DEFAULT_LOGIN_URL = "http://localhost:8080/auth/login"
+        RESPONSE_ITEM_LIMIT = 100  # Maximum number of items in list responses
         
         def validate(self):
             pass
@@ -60,6 +61,68 @@ class APISpec:
 
 # Create FastMCP app
 app = FastMCP("openapi-mcp-server")
+
+def limit_response_items(data: Any, max_items: int = 100) -> Any:
+    """
+    Limit the number of items in list responses to prevent huge responses.
+    
+    Args:
+        data: The response data to limit
+        max_items: Maximum number of items to return (default: 100)
+    
+    Returns:
+        Limited response data with metadata about truncation
+    """
+    if not isinstance(data, (list, dict)):
+        return data
+    
+    # Handle list responses
+    if isinstance(data, list):
+        if len(data) <= max_items:
+            return data
+        
+        logger.info(f"📊 [RESPONSE_LIMIT] Limiting list response from {len(data)} to {max_items} items")
+        
+        limited_data = data[:max_items]
+        
+        # Add metadata about truncation
+        return {
+            "items": limited_data,
+            "total_count": len(data),
+            "returned_count": len(limited_data),
+            "truncated": True,
+            "truncation_note": f"Response limited to {max_items} items out of {len(data)} total items"
+        }
+    
+    # Handle dict responses - look for common list fields
+    if isinstance(data, dict):
+        limited_data = data.copy()
+        truncation_info = {}
+        
+        # Common field names that might contain lists
+        list_fields = ['items', 'data', 'results', 'records', 'list', 'array', 'values']
+        
+        for field in list_fields:
+            if field in data and isinstance(data[field], list):
+                original_list = data[field]
+                if len(original_list) > max_items:
+                    logger.info(f"📊 [RESPONSE_LIMIT] Limiting field '{field}' from {len(original_list)} to {max_items} items")
+                    
+                    limited_data[field] = original_list[:max_items]
+                    truncation_info[f"{field}_truncated"] = True
+                    truncation_info[f"{field}_total_count"] = len(original_list)
+                    truncation_info[f"{field}_returned_count"] = max_items
+        
+        # Add truncation metadata if any fields were truncated
+        if truncation_info:
+            limited_data["_truncation_info"] = {
+                **truncation_info,
+                "truncation_note": "Some list fields were limited to prevent huge responses"
+            }
+        
+        return limited_data
+    
+    return data
 
 class FastMCP2Server:
     """FastMCP 2.0 Server implementation with tool name length fixes."""
@@ -687,14 +750,23 @@ class FastMCP2Server:
             try:
                 result = response.json()
                 logger.info(f"✅ [MCP_SERVER] JSON response parsed successfully")
+                
+                # Apply response limiting to prevent huge responses
+                max_items = getattr(config, 'RESPONSE_ITEM_LIMIT', 100)
+                limited_result = limit_response_items(result, max_items)
+                
+                if limited_result != result:
+                    logger.info(f"📊 [MCP_SERVER] Response limited to prevent huge response")
+                
             except json.JSONDecodeError:
                 result = response.text
                 logger.info(f"📝 [MCP_SERVER] Text response: {len(result)} chars")
+                limited_result = result  # No limiting for text responses
             
             logger.info(f"✅ [MCP_SERVER] Tool {tool_name} executed successfully")
             return {
                 "status": "success",
-                "data": result,
+                "data": limited_result,
                 "status_code": response.status_code,
                 "headers": dict(response.headers)
             }
