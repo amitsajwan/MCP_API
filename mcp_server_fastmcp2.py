@@ -457,10 +457,17 @@ class FastMCP2Server:
             arguments
         )
         
-        if result.get("status") == "success":
-            response_text = json.dumps(result.get("data", result), indent=2)
-            logger.info(f"Tool {tool_name} executed successfully")
-            return response_text
+         if result.get("status") == "success":
+             data = result.get("data", result)
+             
+             # Format response as markdown for better UI display
+             if isinstance(data, dict):
+                 response_text = self._format_response_as_markdown(tool_name, data)
+             else:
+                 response_text = json.dumps(data, indent=2)
+             
+             logger.info(f"Tool {tool_name} executed successfully")
+             return response_text
         else:
             error_msg = f"Tool execution failed: {{result.get('message', 'Unknown error')}}"
             if result.get('status_code'):
@@ -877,6 +884,102 @@ class FastMCP2Server:
         credentials = f"{username}:{password}"
         encoded = base64.b64encode(credentials.encode()).decode()
         return f"Basic {encoded}"
+    
+    def _format_response_as_markdown(self, tool_name: str, data: Dict[str, Any]) -> str:
+        """Format API response data as markdown for better UI display."""
+        try:
+            # Extract tool info for context
+            tool_info = self.tool_name_mapping.get(tool_name, {})
+            method = tool_info.get('method', 'GET')
+            path = tool_info.get('path', '')
+            
+            # Start building markdown response
+            markdown = f"### {method.upper()} {path}\n\n"
+            
+            # Handle different response structures
+            if 'items' in data and isinstance(data['items'], list):
+                # List response with items
+                items = data['items']
+                markdown += f"**Found {len(items)} items:**\n\n"
+                
+                for i, item in enumerate(items[:10], 1):  # Show first 10 items
+                    if isinstance(item, dict):
+                        markdown += f"**{i}.** "
+                        # Show key fields
+                        key_fields = ['id', 'name', 'title', 'amount', 'status', 'currency']
+                        for field in key_fields:
+                            if field in item:
+                                value = item[field]
+                                if isinstance(value, (str, int, float)):
+                                    markdown += f"**{field.title()}:** {value} "
+                        markdown += "\n"
+                    else:
+                        markdown += f"**{i}.** {str(item)}\n"
+                
+                if len(items) > 10:
+                    markdown += f"\n*... and {len(items) - 10} more items*\n"
+                
+                # Show truncation info if present
+                if data.get('truncated'):
+                    markdown += f"\n> **Note:** {data.get('truncation_note', 'Response was truncated')}\n"
+                    
+            elif 'data' in data and isinstance(data['data'], list):
+                # Data field contains list
+                items = data['data']
+                markdown += f"**Found {len(items)} items:**\n\n"
+                
+                for i, item in enumerate(items[:10], 1):
+                    if isinstance(item, dict):
+                        markdown += f"**{i}.** "
+                        key_fields = ['id', 'name', 'title', 'amount', 'status', 'currency']
+                        for field in key_fields:
+                            if field in item:
+                                value = item[field]
+                                if isinstance(value, (str, int, float)):
+                                    markdown += f"**{field.title()}:** {value} "
+                        markdown += "\n"
+                    else:
+                        markdown += f"**{i}.** {str(item)}\n"
+                
+                if len(items) > 10:
+                    markdown += f"\n*... and {len(items) - 10} more items*\n"
+                    
+            elif isinstance(data, dict):
+                # Single object response
+                markdown += "**Response Data:**\n\n"
+                
+                # Show key-value pairs
+                for key, value in data.items():
+                    if key.startswith('_'):
+                        continue  # Skip internal fields
+                    
+                    if isinstance(value, (str, int, float, bool)):
+                        markdown += f"- **{key.replace('_', ' ').title()}:** {value}\n"
+                    elif isinstance(value, dict):
+                        markdown += f"- **{key.replace('_', ' ').title()}:**\n"
+                        for sub_key, sub_value in value.items():
+                            if isinstance(sub_value, (str, int, float, bool)):
+                                markdown += f"  - {sub_key}: {sub_value}\n"
+                    elif isinstance(value, list) and len(value) > 0:
+                        markdown += f"- **{key.replace('_', ' ').title()}:** {len(value)} items\n"
+                        for i, item in enumerate(value[:5], 1):
+                            if isinstance(item, (str, int, float)):
+                                markdown += f"  - {i}. {item}\n"
+                            elif isinstance(item, dict):
+                                markdown += f"  - {i}. {str(item)[:100]}...\n"
+                        if len(value) > 5:
+                            markdown += f"  - ... and {len(value) - 5} more\n"
+            
+            else:
+                # Fallback to JSON
+                markdown += f"```json\n{json.dumps(data, indent=2)}\n```\n"
+            
+            return markdown
+            
+        except Exception as e:
+            logger.error(f"Error formatting markdown response: {e}")
+            # Fallback to JSON
+            return f"```json\n{json.dumps(data, indent=2)}\n```"
 
 def main():
     """Main entry point."""
