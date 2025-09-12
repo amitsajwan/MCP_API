@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Simple Demo Web UI for MCP API
-==============================
-Simplified version without threading/global variable issues
-Perfect for demo purposes - single user, reliable initialization
+MCP Bot Web Interface
+====================
+Personal API assistant with 51 tools
+Clean, simple, and reliable
 """
 
 import os
@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'demo-secret-key'
+app.config['SECRET_KEY'] = 'mcp-bot-secret-2024'
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Simple class to hold MCP service state (no global variables)
@@ -219,14 +219,14 @@ def handle_clear_conversation():
     emit('conversation_cleared', {'message': '✅ Conversation cleared'})
 
 if __name__ == '__main__':
-    print("🚀 Starting Simple Demo Web UI...")
-    print("📱 Open http://localhost:5000 in your browser")
-    print("💡 This is a simplified demo version - single user, reliable initialization")
+    print("🤖 Starting MCP Bot...")
+    print("🌐 Open http://localhost:5000 in your browser")
+    print("💬 Chat with your personal API assistant")
     print()
     
     try:
         socketio.run(app, host='0.0.0.0', port=5000, debug=False)
     except KeyboardInterrupt:
-        print("\n👋 Shutting down demo web UI...")
+        print("\n👋 Shutting down MCP Bot...")
     except Exception as e:
-        print(f"❌ Error starting web UI: {e}")
+        print(f"❌ Error starting MCP Bot: {e}")
