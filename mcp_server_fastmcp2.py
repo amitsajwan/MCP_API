@@ -354,10 +354,18 @@ class FastMCP2Server:
                 if param_enum:
                     tool_description += f" [Options: {', '.join(map(str, param_enum))}]"
 
-        # Create the tool function
+        # Create the tool function with proper parameter handling for FastMCP 2.0
         def create_tool_function(tool_name):
-            async def api_tool_function(arguments: Dict[str, Any]) -> str:
+            # Get the input schema to create proper function signature
+            input_schema = self._build_input_schema_enhanced(operation, path, method, api_spec.spec)
+            
+            # Create a function that accepts arguments as a single parameter
+            async def api_tool_function(arguments: Dict[str, Any] = None) -> str:
                 try:
+                    # Handle case where arguments might be None
+                    if arguments is None:
+                        arguments = {}
+                    
                     logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {list(arguments.keys())}")
                     
                     # Get tool info from mapping
@@ -404,7 +412,7 @@ class FastMCP2Server:
         logger.debug(f"🔧 Registered tool: {tool_name} (len={len(tool_name)}) -> {method} {path}")
     
     def _build_input_schema_enhanced(self, operation: Dict[str, Any], path: str, method: str, spec_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Build input schema from OpenAPI operation with enhanced $ref resolution and enum handling."""
+        """Build input schema from OpenAPI operation with enhanced $ref resolution and comprehensive constraint preservation."""
         schema = {
             "type": "object",
             "properties": {},
@@ -432,26 +440,53 @@ class FastMCP2Server:
             # Resolve $ref references in parameter schema
             resolved_schema = self._resolve_schema_ref_enhanced(param_schema, spec_data)
             
-            schema["properties"][param_name] = {
+            # Build comprehensive parameter schema preserving all constraints
+            param_schema_props = {
                 "type": resolved_schema.get('type', 'string'),
-                "description": param_description,
-                "enum": resolved_schema.get('enum'),
-                "minimum": resolved_schema.get('minimum'),
-                "maximum": resolved_schema.get('maximum'),
-                "format": resolved_schema.get('format'),
-                "pattern": resolved_schema.get('pattern'),
-                "items": resolved_schema.get('items'),
-                "default": resolved_schema.get('default'),
-                "example": resolved_schema.get('example')
+                "description": param_description or resolved_schema.get('description', ''),
             }
             
-            # Remove None values
-            schema["properties"][param_name] = {k: v for k, v in schema["properties"][param_name].items() if v is not None}
+            # Preserve all validation constraints
+            constraint_fields = [
+                'enum', 'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum',
+                'minLength', 'maxLength', 'pattern', 'format', 'multipleOf',
+                'minItems', 'maxItems', 'uniqueItems', 'minProperties', 'maxProperties',
+                'items', 'properties', 'additionalProperties', 'required', 'allOf', 
+                'oneOf', 'anyOf', 'not', 'const', 'default', 'example', 'examples'
+            ]
+            
+            for field in constraint_fields:
+                if field in resolved_schema and resolved_schema[field] is not None:
+                    param_schema_props[field] = resolved_schema[field]
+            
+            # Handle array-specific constraints
+            if resolved_schema.get('type') == 'array':
+                items_schema = resolved_schema.get('items', {})
+                if items_schema:
+                    # Recursively resolve items schema
+                    resolved_items = self._resolve_schema_ref_enhanced(items_schema, spec_data)
+                    param_schema_props['items'] = resolved_items
+            
+            # Handle object-specific constraints
+            if resolved_schema.get('type') == 'object':
+                properties = resolved_schema.get('properties', {})
+                if properties:
+                    resolved_properties = {}
+                    for prop_name, prop_schema in properties.items():
+                        resolved_prop = self._resolve_schema_ref_enhanced(prop_schema, spec_data)
+                        resolved_properties[prop_name] = resolved_prop
+                    param_schema_props['properties'] = resolved_properties
+                
+                # Preserve object constraints
+                if 'additionalProperties' in resolved_schema:
+                    param_schema_props['additionalProperties'] = resolved_schema['additionalProperties']
+            
+            schema["properties"][param_name] = param_schema_props
             
             if param_required:
                 schema["required"].append(param_name)
         
-        # Process request body
+        # Process request body with enhanced schema preservation
         request_body = operation.get('requestBody', {})
         if request_body:
             content = request_body.get('content', {})
@@ -470,7 +505,7 @@ class FastMCP2Server:
         return schema
     
     def _resolve_schema_ref_enhanced(self, schema: Dict[str, Any], spec_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Enhanced $ref resolution with better handling of nested references and enums."""
+        """Enhanced $ref resolution with comprehensive schema preservation and nested reference handling."""
         if '$ref' not in schema:
             return schema
         
@@ -484,14 +519,61 @@ class FastMCP2Server:
             
             if schema_name in schemas:
                 referenced_schema = schemas[schema_name]
-                # Recursively resolve any nested $ref references
-                return self._resolve_schema_ref_enhanced(referenced_schema, spec_data)
-        
-        logger.warning(f"Could not resolve $ref: {ref_path}")
-        return {
-            "type": "object",
-            "description": f"Referenced schema: {ref_path}"
-        }
+                # Recursively resolve any nested $ref references while preserving all details
+                resolved = self._resolve_schema_ref_enhanced(referenced_schema, spec_data)
+                
+                # Preserve the original schema name for context
+                if 'title' not in resolved:
+                    resolved['title'] = schema_name
+                
+                return resolved
+            else:
+                logger.warning(f"Schema not found: {schema_name}")
+                return {
+                    "type": "object",
+                    "description": f"Referenced schema not found: {schema_name}",
+                    "title": schema_name
+                }
+        elif ref_path.startswith('#/components/parameters/'):
+            # Handle parameter references
+            param_name = ref_path.split('/')[-1]
+            components = spec_data.get('components', {})
+            parameters = components.get('parameters', {})
+            
+            if param_name in parameters:
+                param_def = parameters[param_name]
+                param_schema = param_def.get('schema', {})
+                return self._resolve_schema_ref_enhanced(param_schema, spec_data)
+            else:
+                logger.warning(f"Parameter not found: {param_name}")
+                return {
+                    "type": "string",
+                    "description": f"Referenced parameter not found: {param_name}"
+                }
+        elif ref_path.startswith('#/components/responses/'):
+            # Handle response references
+            response_name = ref_path.split('/')[-1]
+            components = spec_data.get('components', {})
+            responses = components.get('responses', {})
+            
+            if response_name in responses:
+                response_def = responses[response_name]
+                content = response_def.get('content', {})
+                if 'application/json' in content:
+                    json_schema = content['application/json'].get('schema', {})
+                    return self._resolve_schema_ref_enhanced(json_schema, spec_data)
+            else:
+                logger.warning(f"Response not found: {response_name}")
+                return {
+                    "type": "object",
+                    "description": f"Referenced response not found: {response_name}"
+                }
+        else:
+            logger.warning(f"Unsupported $ref path: {ref_path}")
+            return {
+                "type": "object",
+                "description": f"Unsupported reference: {ref_path}"
+            }
     
     def _execute_tool(self, tool_name: str, spec_name: str, method: str, path: str, base_url: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Execute an API tool."""
