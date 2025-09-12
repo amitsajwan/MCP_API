@@ -1,106 +1,135 @@
-# MCP Bot - My Personal API Assistant
+# MCP OpenAPI Server
 
-A smart assistant that understands what you need and automatically uses the right API tools to help you.
+An MCP (Model Context Protocol) server that automatically generates tools from OpenAPI specifications, allowing MCP clients to interact with REST APIs seamlessly.
 
-## 🧠 What This Does
+## Features
 
-My bot is smart and can:
-- **Understand** what you're asking for in plain English
-- **Pick** the right tools from 51 different APIs
-- **Do** the work automatically for you
-- **Chain** multiple tools together when needed
-- **Handle** problems and try again if something goes wrong
+- **Automatic Tool Generation**: Parses OpenAPI specs and creates MCP tools for each operation
+- **Schema Validation**: Validates input parameters against OpenAPI schemas
+- **Error Handling**: Comprehensive error handling with proper HTTP status codes
+- **Type Safety**: Supports all OpenAPI data types and validation rules
+- **Real API Calls**: Makes actual HTTP requests to the specified API endpoints
 
-## 🚀 Quick Start
-
-### Easy Way (Recommended)
-```bash
-python start_bot.py
-```
-Just run this and pick what you want!
-
-### Option 1: Web Interface
-```bash
-python web_ui_ws.py
-```
-- Open http://localhost:5000
-- Set up your API credentials
-- Start chatting with your bot
-- Clean, simple interface
-
-### Option 2: Full Mode (With Azure)
-```bash
-# Set Azure credentials first
-$env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
-$env:AZURE_DEPLOYMENT_NAME="gpt-4o"
-$env:AZURE_CLIENT_ID="your-client-id"
-$env:AZURE_CLIENT_SECRET="your-client-secret"
-$env:AZURE_TENANT_ID="your-tenant-id"
-
-# Then run
-python intelligent_bot.py
-```
-
-### Option 3: Demo Mode (No Azure)
-```bash
-python intelligent_bot_demo.py
-```
-- Works immediately without Azure credentials
-- Shows how tools work
-- Good for testing
-
-## 🎯 Example Interactions
-
-```
-You: "Show me all pending payments over $1000"
-🧠 Analyzing your request...
-🔧 Tools executed:
-  - cash_api_getPayments: ✅ Success
-    Args: {"status": "pending", "amount_min": 1000}
-🤖 Response: I found 3 pending payments over $1000...
-
-You: "I need to approve payment 12345 and create a CLS settlement"
-🧠 Analyzing your request...
-🔧 Tools executed:
-  - cash_api_updatePayment: ✅ Success
-    Args: {"payment_id": "12345", "status": "approved"}
-  - cls_api_createSettlement: ✅ Success
-    Args: {"payment_id": "12345", "amount": 5000}
-🤖 Response: I've successfully approved payment 12345 and created a CLS settlement...
-```
-
-## 🔧 Available Tools
-
-**51 tools** from 4 APIs:
-- **Cash API**: Payments, transactions, approvals
-- **CLS API**: Settlements, currency operations  
-- **Mailbox API**: Message management
-- **Securities API**: Trading, positions, orders
-
-## 📁 Core Files
-
-- `mcp_server_fastmcp2.py` - MCP server with 51 tools
-- `mcp_client.py` - MCP client for Azure GPT-4o
-- `mcp_service.py` - Modern LLM service
-- `intelligent_bot.py` - Command-line intelligent bot
-- `intelligent_bot_demo.py` - Demo version (no Azure required)
-- `web_ui_ws.py` - WebSocket UI
-- `templates/chat_ws.html` - Web UI template
-
-## 🛠️ Installation
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 🎯 Why I Built This
+## Usage
 
-This isn't just another chatbot. It's a smart assistant that actually does things for you:
+### 1. Start the MCP Server
 
-1. **You tell me** what you need: "Show me all pending payments over $1000"
-2. **I figure out** what tools to use
-3. **I pick** the right API: `cash_api_getPayments`
-4. **I run** the tool with the right settings
-5. **I give you** a clear answer with the results
+```bash
+python mcp_openapi_server.py <openapi-spec.yaml>
+```
 
-**I built this because I wanted a bot that actually helps instead of just talking.**
+Example:
+```bash
+python mcp_openapi_server.py keylink-updated-api.yaml
+```
+
+### 2. Use as MCP Client
+
+```python
+import asyncio
+from mcp.client import Client
+from mcp.client.stdio import stdio_client
+
+async def main():
+    async with stdio_client("python", ["mcp_openapi_server.py", "keylink-updated-api.yaml"]) as (read, write):
+        client = Client("my-client")
+        await client.initialize(read, write)
+        
+        # List available tools
+        tools = await client.list_tools()
+        print(f"Available tools: {[tool.name for tool in tools.tools]}")
+        
+        # Call a tool
+        result = await client.call_tool(
+            name="getAccounts",
+            arguments={"category": "EDO_TRANSACTION"}
+        )
+        print(f"Result: {result.content[0].text}")
+
+asyncio.run(main())
+```
+
+### 3. Run Example Client
+
+```bash
+python example_client.py
+```
+
+## How It Works
+
+1. **Parse OpenAPI Spec**: The server loads and parses the OpenAPI specification
+2. **Generate Tools**: For each operation in the spec, it creates an MCP tool
+3. **Handle Requests**: When a tool is called, it makes the corresponding HTTP request
+4. **Return Results**: Returns the API response as MCP tool results
+
+## Supported OpenAPI Features
+
+- ✅ All HTTP methods (GET, POST, PUT, DELETE, etc.)
+- ✅ Path parameters
+- ✅ Query parameters
+- ✅ Request/response schemas
+- ✅ Parameter validation (required, type, enum)
+- ✅ Error responses
+- ✅ Schema references ($ref)
+- ✅ Multiple servers
+
+## Example: KeyLink API
+
+For the KeyLink API specification provided:
+
+### Generated Tools
+
+1. **getAccounts**
+   - **Input**: `category` (string, required, enum values)
+   - **Output**: List of accounts with full schema validation
+   - **Error Handling**: 400 (validation), 403 (forbidden)
+
+### Usage
+
+```python
+# Call getAccounts with different categories
+result = await client.call_tool(
+    name="getAccounts",
+    arguments={"category": "EDO_TRANSACTION"}
+)
+
+# The tool will:
+# 1. Validate the category parameter
+# 2. Make GET request to /api/accounts?category=EDO_TRANSACTION
+# 3. Return the response as structured data
+```
+
+## Error Handling
+
+The server handles various error scenarios:
+
+- **Invalid Parameters**: Returns validation errors
+- **API Errors**: Returns HTTP status codes and error messages
+- **Network Errors**: Returns connection/timeout errors
+- **Schema Errors**: Returns parsing/validation errors
+
+## Configuration
+
+The server automatically uses:
+- **Base URL**: From the OpenAPI spec's `servers` section
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+## Development
+
+To extend the server:
+
+1. **Add Custom Headers**: Modify the HTTP client configuration
+2. **Add Authentication**: Implement auth schemes in the request handler
+3. **Add Caching**: Implement response caching
+4. **Add Logging**: Enhance logging for debugging
+
+## License
+
+MIT License - see LICENSE file for details.
