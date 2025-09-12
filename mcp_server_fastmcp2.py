@@ -359,14 +359,14 @@ class FastMCP2Server:
             # Get the input schema to create proper function signature
             input_schema = self._build_input_schema_enhanced(operation, path, method, api_spec.spec)
             
-            # Create a function that accepts arguments as a single parameter
-            async def api_tool_function(arguments: Dict[str, Any] = None) -> str:
+            # Create a function that accepts arguments as **kwargs
+            async def api_tool_function(**kwargs) -> str:
                 try:
-                    # Handle case where arguments might be None
-                    if arguments is None:
-                        arguments = {}
+                    # Handle case where no arguments are provided
+                    if not kwargs:
+                        kwargs = {}
                     
-                    logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {list(arguments.keys())}")
+                    logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {list(kwargs.keys())}")
                     
                     # Get tool info from mapping
                     tool_info = self.tool_name_mapping[tool_name]
@@ -378,7 +378,7 @@ class FastMCP2Server:
                         tool_info['method'], 
                         tool_info['path'], 
                         tool_info['base_url'], 
-                        arguments
+                        kwargs
                     )
                     
                     if result.get("status") == "success":
