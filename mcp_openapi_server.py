@@ -170,7 +170,7 @@ class MCPOpenAPIServer:
             return ListToolsResult(tools=tools)
         
         @self.server.call_tool()
-        async def call_tool(name: str, arguments: Dict[str, Any]) -> CallToolResult:
+        async def call_tool(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             """Execute a tool by making the corresponding API call."""
             try:
                 # Find the operation
@@ -181,10 +181,11 @@ class MCPOpenAPIServer:
                         break
                 
                 if not operation:
-                    return CallToolResult(
-                        content=[TextContent(type="text", text=f"Tool '{name}' not found")],
-                        isError=True
-                    )
+                    return {
+                        "content": [{"type": "text", "text": f"Tool '{name}' not found"}],
+                        "isError": True,
+                        "meta": None
+                    }
                 
                 # Build the request
                 url = urljoin(self.parser.base_url, operation['path'])
@@ -220,22 +221,26 @@ class MCPOpenAPIServer:
                     except:
                         result_text = response.text
                     
-                    return CallToolResult(
-                        content=[TextContent(type="text", text=result_text)]
-                    )
+                    return {
+                        "content": [{"type": "text", "text": result_text}],
+                        "isError": False,
+                        "meta": None
+                    }
                 else:
                     error_text = f"API Error {response.status_code}: {response.text}"
-                    return CallToolResult(
-                        content=[TextContent(type="text", text=error_text)],
-                        isError=True
-                    )
+                    return {
+                        "content": [{"type": "text", "text": error_text}],
+                        "isError": True,
+                        "meta": None
+                    }
                 
             except Exception as e:
                 logger.error(f"Error executing tool {name}: {e}")
-                return CallToolResult(
-                    content=[TextContent(type="text", text=f"Error: {str(e)}")],
-                    isError=True
-                )
+                return {
+                    "content": [{"type": "text", "text": f"Error: {str(e)}"}],
+                    "isError": True,
+                    "meta": None
+                }
     
     async def run(self):
         """Run the MCP server."""
