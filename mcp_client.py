@@ -43,7 +43,28 @@ def count_tokens(text: str) -> int:
     return len(text.split())
 
 def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
-    """Truncate huge tool responses."""
+    """Truncate huge tool responses while preserving JSON structure."""
+    
+    # Handle CallToolResult objects specifically
+    if hasattr(obj, 'isError') and hasattr(obj, 'content'):
+        # Convert CallToolResult to a serializable dict
+        serializable_obj = {
+            "isError": obj.isError,
+            "content": []
+        }
+        
+        # Process content items
+        for content_item in obj.content:
+            if hasattr(content_item, 'text'):
+                serializable_obj["content"].append({
+                    "text": content_item.text
+                })
+            else:
+                # Handle other content types
+                serializable_obj["content"].append(str(content_item))
+        
+        return safe_truncate(serializable_obj, max_tokens)
+    
     # Handle objects with structured_content attribute
     if hasattr(obj, 'structured_content'):
         try:
@@ -53,21 +74,45 @@ def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
             # If structured_content is not serializable, convert to string
             text = json.dumps(str(obj.structured_content))
     else:
-        text = json.dumps(obj)
+        try:
+            text = json.dumps(obj)
+        except (TypeError, ValueError):
+            # If object is not JSON serializable, convert to string representation
+            text = json.dumps(str(obj))
     
     tokens = count_tokens(text)
     if tokens <= max_tokens:
         return obj
+    
+    # Truncate while preserving JSON structure
     if isinstance(obj, list):
-        subset = obj[:100]
+        # For lists, take a subset and add truncation info
+        subset = obj[:100] if len(obj) > 100 else obj
+        if len(obj) > 100:
+            return {
+                "note": f"Response truncated from {len(obj)} items to 100 items for safety.",
+                "truncated_items": subset
+            }
+        return subset
     elif isinstance(obj, dict):
-        subset = dict(list(obj.items())[:50])
+        # For dicts, take a subset of key-value pairs
+        items = list(obj.items())
+        if len(items) > 50:
+            subset = dict(items[:50])
+            return {
+                "note": f"Response truncated from {len(items)} key-value pairs to 50 pairs for safety.",
+                "truncated_data": subset
+            }
+        return obj
     else:
-        subset = str(obj)[:5000]
-    return {
-        "note": f"Response truncated from {tokens} tokens for safety.",
-        "sample": subset
-    }
+        # For other types, truncate the string representation
+        str_repr = str(obj)
+        if len(str_repr) > 5000:
+            return {
+                "note": f"Response truncated from {len(str_repr)} characters to 5000 characters for safety.",
+                "truncated_text": str_repr[:5000]
+            }
+        return obj
 
 
 async def create_azure_client() -> AsyncAzureOpenAI:
