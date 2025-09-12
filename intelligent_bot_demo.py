@@ -1,7 +1,7 @@
 """
-Intelligent Bot Demo (No Azure Required)
-=======================================
-Demo version that shows tool execution without requiring Azure credentials
+MCP Bot Demo - No Azure Needed
+=============================
+Try out my bot without needing Azure setup
 """
 
 import asyncio
@@ -10,18 +10,18 @@ import os
 from mcp_client import MCPClient, PythonStdioTransport, list_and_prepare_tools, safe_truncate
 
 async def run_demo_bot():
-    """Run the demo bot that shows tool execution"""
-    print("🧠 Intelligent MCP Bot (Demo Mode)")
+    """Run my demo bot"""
+    print("🤖 MCP Bot Demo")
     print("=" * 50)
-    print("I can understand your requirements and execute tools!")
-    print("Note: This is demo mode - no Azure LLM, but I can show tool execution")
+    print("Hey! This is my demo version - no Azure setup needed.")
+    print("I can show you how I work with tools, but I won't be super smart.")
     print()
-    print("Examples:")
+    print("Try asking me things like:")
     print("  - 'Show me all pending payments over $1000'")
     print("  - 'Create a new payment for $500 to John Doe'")
     print("  - 'Get my cash balance and recent transactions'")
     print()
-    print("Type 'quit' to exit")
+    print("Type 'quit' when you're done")
     print()
     
     # Initialize MCP connection

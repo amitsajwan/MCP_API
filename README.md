@@ -1,46 +1,53 @@
-# Intelligent MCP Bot with Azure GPT-4o
+# MCP Bot - My Personal API Assistant
 
-**Objective**: LLM understands user requirements and automatically executes the appropriate tools to fulfill them.
+A smart assistant that understands what you need and automatically uses the right API tools to help you.
 
 ## 🧠 What This Does
 
-The LLM intelligently:
-- **Understands** your natural language requests
-- **Selects** the right tools from 51 available APIs
-- **Executes** tools automatically to fulfill your needs
-- **Chains** multiple tools when needed
-- **Handles** errors and retries gracefully
+My bot is smart and can:
+- **Understand** what you're asking for in plain English
+- **Pick** the right tools from 51 different APIs
+- **Do** the work automatically for you
+- **Chain** multiple tools together when needed
+- **Handle** problems and try again if something goes wrong
 
 ## 🚀 Quick Start
 
-### Option 1: Demo Mode (No Azure Required)
+### Easy Way (Recommended)
 ```bash
-python intelligent_bot_demo.py
+python start_bot.py
 ```
-- Works immediately without Azure credentials
-- Shows intelligent tool selection and execution
-- Demonstrates modern LLM capabilities
+Just run this and pick what you want!
+
+### Option 1: Web Interface
+```bash
+python web_ui_ws.py
+```
+- Open http://localhost:5000
+- Set up your API credentials
+- Start chatting with your bot
+- Clean, simple interface
 
 ### Option 2: Full Mode (With Azure)
 ```bash
-# Set Azure credentials
+# Set Azure credentials first
 $env:AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 $env:AZURE_DEPLOYMENT_NAME="gpt-4o"
 $env:AZURE_CLIENT_ID="your-client-id"
 $env:AZURE_CLIENT_SECRET="your-client-secret"
 $env:AZURE_TENANT_ID="your-tenant-id"
 
-# Run the intelligent bot
+# Then run
 python intelligent_bot.py
 ```
 
-### Option 3: Web UI
+### Option 3: Demo Mode (No Azure)
 ```bash
-python web_ui_ws.py
+python intelligent_bot_demo.py
 ```
-- Open http://localhost:5000
-- Configure credentials in the UI
-- Chat with the intelligent bot
+- Works immediately without Azure credentials
+- Shows how tools work
+- Good for testing
 
 ## 🎯 Example Interactions
 
@@ -86,14 +93,14 @@ You: "I need to approve payment 12345 and create a CLS settlement"
 pip install -r requirements.txt
 ```
 
-## 🎯 The Point
+## 🎯 Why I Built This
 
-**This is NOT just a chat bot.** This is an intelligent system where:
+This isn't just another chatbot. It's a smart assistant that actually does things for you:
 
-1. **You ask** in natural language: "Show me all pending payments over $1000"
-2. **LLM understands** what you need
-3. **LLM selects** the right tool: `cash_api_getPayments`
-4. **LLM executes** the tool with correct parameters
-5. **LLM responds** with intelligent analysis of the results
+1. **You tell me** what you need: "Show me all pending payments over $1000"
+2. **I figure out** what tools to use
+3. **I pick** the right API: `cash_api_getPayments`
+4. **I run** the tool with the right settings
+5. **I give you** a clear answer with the results
 
-**The LLM is the intelligence that orchestrates the tools to fulfill your requirements.**
+**I built this because I wanted a bot that actually helps instead of just talking.**

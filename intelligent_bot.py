@@ -1,7 +1,7 @@
 """
-Intelligent Bot with LLM + MCP Integration
-=========================================
-LLM understands user requirements and executes tools automatically
+MCP Bot - Personal API Assistant
+===============================
+My smart assistant that understands what you need and does it for you
 """
 
 import asyncio
@@ -10,17 +10,19 @@ import os
 from mcp_service import ModernLLMService
 
 async def run_intelligent_bot():
-    """Run the intelligent bot that understands and executes tools"""
-    print("🧠 Intelligent MCP Bot")
+    """Run my personal API assistant"""
+    print("🤖 MCP Bot - Your Personal Assistant")
     print("=" * 50)
-    print("I understand your requirements and execute tools automatically!")
-    print("Examples:")
+    print("Hey! I'm your bot and I can help you with API stuff.")
+    print("Just tell me what you need and I'll figure out how to do it.")
+    print()
+    print("Try asking me things like:")
     print("  - 'Show me all pending payments over $1000'")
     print("  - 'Create a new payment for $500 to John Doe'")
     print("  - 'Get my cash balance and recent transactions'")
     print("  - 'I need to approve payment 12345 and create a CLS settlement'")
     print()
-    print("Type 'quit' to exit")
+    print("Type 'quit' when you're done")
     print()
     
     # Initialize the MCP service

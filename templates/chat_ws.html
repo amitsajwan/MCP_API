@@ -3,355 +3,650 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Modern LLM Tool Capabilities Demo</title>
+    <title>MCP Bot - My Personal Assistant</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.js"></script>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        * {
             margin: 0;
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
+            padding: 0;
+            box-sizing: border-box;
         }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            color: #2c3e50;
+            line-height: 1.6;
+        }
+
+        .app {
+            max-width: 900px;
+            margin: 20px auto;
             background: white;
-            border-radius: 15px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
             overflow: hidden;
         }
-        
+
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: #2c3e50;
             color: white;
             padding: 20px;
             text-align: center;
+            position: relative;
         }
-        
+
         .header h1 {
-            margin: 0;
-            font-size: 2em;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 8px;
         }
-        
-        .status {
-            margin-top: 10px;
-            padding: 10px;
-            border-radius: 5px;
-            background: rgba(255,255,255,0.2);
-            font-size: 0.9em;
+
+        .header .subtitle {
+            font-size: 14px;
+            opacity: 0.8;
+            font-weight: 400;
         }
-        
-        .chat-container {
+
+        .status-bar {
+            background: #34495e;
+            padding: 8px 20px;
+            font-size: 13px;
+            color: #ecf0f1;
             display: flex;
-            height: 600px;
+            justify-content: space-between;
+            align-items: center;
         }
-        
-        .chat-main {
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #e74c3c;
+        }
+
+        .status-dot.connected {
+            background: #27ae60;
+        }
+
+        .main-content {
+            display: flex;
+            height: 500px;
+        }
+
+        .chat-area {
             flex: 1;
             display: flex;
             flex-direction: column;
         }
-        
-        .chat-messages {
+
+        .messages {
             flex: 1;
             overflow-y: auto;
             padding: 20px;
-            background: #f8f9fa;
+            background: #fafbfc;
         }
-        
+
         .message {
-            margin-bottom: 15px;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+        }
+
+        .message.user {
+            flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+
+        .user .message-avatar {
+            background: #3498db;
+            color: white;
+        }
+
+        .bot .message-avatar {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .system .message-avatar {
+            background: #f39c12;
+            color: white;
+        }
+
+        .error .message-avatar {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .tool .message-avatar {
+            background: #9b59b6;
+            color: white;
+        }
+
+        .message-content {
+            max-width: 70%;
             padding: 12px 16px;
             border-radius: 18px;
-            max-width: 70%;
-            word-wrap: break-word;
+            font-size: 14px;
+            line-height: 1.4;
         }
-        
-        .user-message {
-            background: #007bff;
+
+        .user .message-content {
+            background: #3498db;
             color: white;
-            margin-left: auto;
-            text-align: right;
         }
-        
-        .bot-message {
+
+        .bot .message-content {
             background: white;
-            color: #333;
-            border: 1px solid #e9ecef;
-            margin-right: auto;
+            color: #2c3e50;
+            border: 1px solid #e1e8ed;
         }
-        
-        .system-message {
-            background: #28a745;
+
+        .system .message-content {
+            background: #f39c12;
             color: white;
-            margin: 0 auto;
-            text-align: center;
-            font-size: 0.9em;
-        }
-        
-        .error-message {
-            background: #dc3545;
-            color: white;
-            margin: 0 auto;
             text-align: center;
         }
-        
-        .tool-call {
-            background: #ffc107;
-            color: #333;
-            margin: 5px auto;
-            font-size: 0.9em;
-            max-width: 90%;
-        }
-        
-        .capabilities {
-            background: #17a2b8;
+
+        .error .message-content {
+            background: #e74c3c;
             color: white;
-            margin: 5px auto;
-            font-size: 0.9em;
-            max-width: 90%;
+            text-align: center;
         }
-        
-        .chat-input {
+
+        .tool .message-content {
+            background: #9b59b6;
+            color: white;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 13px;
+        }
+
+        .input-area {
             padding: 20px;
             background: white;
-            border-top: 1px solid #e9ecef;
-            display: flex;
-            gap: 10px;
+            border-top: 1px solid #e1e8ed;
         }
-        
-        .chat-input input {
+
+        .input-container {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .message-input {
             flex: 1;
             padding: 12px 16px;
-            border: 2px solid #e9ecef;
-            border-radius: 25px;
-            font-size: 16px;
+            border: 2px solid #e1e8ed;
+            border-radius: 24px;
+            font-size: 14px;
             outline: none;
-            transition: border-color 0.3s;
+            transition: border-color 0.2s;
         }
-        
-        .chat-input input:focus {
-            border-color: #007bff;
+
+        .message-input:focus {
+            border-color: #3498db;
         }
-        
-        .chat-input button {
-            padding: 12px 24px;
-            background: #007bff;
+
+        .send-button {
+            padding: 12px 20px;
+            background: #3498db;
             color: white;
             border: none;
-            border-radius: 25px;
+            border-radius: 24px;
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.3s;
+            transition: background-color 0.2s;
         }
-        
-        .chat-input button:hover {
-            background: #0056b3;
+
+        .send-button:hover {
+            background: #2980b9;
         }
-        
+
+        .send-button:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
         .sidebar {
-            width: 300px;
+            width: 280px;
             background: #f8f9fa;
-            border-left: 1px solid #e9ecef;
+            border-left: 1px solid #e1e8ed;
             padding: 20px;
             overflow-y: auto;
         }
-        
-        .credentials-form {
-            background: white;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            border: 1px solid #e9ecef;
+
+        .sidebar h3 {
+            font-size: 16px;
+            margin-bottom: 16px;
+            color: #2c3e50;
+            font-weight: 600;
         }
-        
-        .credentials-form h3 {
-            margin-top: 0;
-            color: #333;
+
+        .credentials-section {
+            margin-bottom: 24px;
         }
-        
+
         .form-group {
-            margin-bottom: 15px;
+            margin-bottom: 12px;
         }
-        
+
         .form-group label {
             display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
-            color: #555;
+            font-size: 12px;
+            font-weight: 600;
+            color: #7f8c8d;
+            margin-bottom: 4px;
         }
-        
+
         .form-group input {
             width: 100%;
             padding: 8px 12px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            font-size: 14px;
+            border: 1px solid #e1e8ed;
+            border-radius: 6px;
+            font-size: 13px;
+            outline: none;
         }
-        
+
+        .form-group input:focus {
+            border-color: #3498db;
+        }
+
         .btn {
-            background: #28a745;
-            color: white;
             padding: 8px 16px;
             border: none;
-            border-radius: 5px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
             cursor: pointer;
-            font-size: 14px;
+            transition: background-color 0.2s;
         }
-        
-        .btn:hover {
-            background: #218838;
+
+        .btn-primary {
+            background: #3498db;
+            color: white;
         }
-        
-        .tools-list {
+
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+
+        .btn-secondary {
+            background: #95a5a6;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #7f8c8d;
+        }
+
+        .tools-section {
+            margin-bottom: 24px;
+        }
+
+        .tool-item {
             background: white;
-            padding: 15px;
-            border-radius: 10px;
-            border: 1px solid #e9ecef;
+            padding: 12px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            border: 1px solid #e1e8ed;
+            font-size: 12px;
         }
-        
-        .tools-list h3 {
-            margin-top: 0;
-            color: #333;
+
+        .tool-name {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 4px;
         }
-        
-        .typing {
+
+        .tool-desc {
+            color: #7f8c8d;
+            line-height: 1.3;
+        }
+
+        .capabilities {
+            background: #e8f5e8;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #27ae60;
+            margin-bottom: 16px;
+        }
+
+        .typing-indicator {
+            display: none;
+            padding: 12px 16px;
+            color: #7f8c8d;
             font-style: italic;
-            color: #666;
+            font-size: 13px;
+        }
+
+        .typing-indicator.show {
+            display: block;
+        }
+
+        .scroll-to-bottom {
+            position: fixed;
+            bottom: 100px;
+            right: 20px;
+            width: 40px;
+            height: 40px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .scroll-to-bottom.show {
+            display: flex;
+        }
+
+        @media (max-width: 768px) {
+            .app {
+                margin: 10px;
+                border-radius: 8px;
+            }
+            
+            .main-content {
+                flex-direction: column;
+                height: auto;
+            }
+            
+            .sidebar {
+                width: 100%;
+                border-left: none;
+                border-top: 1px solid #e1e8ed;
+            }
+            
+            .message-content {
+                max-width: 85%;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
+    <div class="app">
         <div class="header">
-            <h1>🤖 Modern LLM Tool Capabilities Demo</h1>
-            <div class="status" id="status">Connecting...</div>
+            <h1>MCP Bot</h1>
+            <div class="subtitle">My Personal API Assistant</div>
         </div>
         
-        <div class="chat-container">
-            <div class="chat-main">
-                <div class="chat-messages" id="messages"></div>
-                <div class="chat-input">
-                    <input type="text" id="messageInput" placeholder="Ask me anything..." onkeypress="handleKeyPress(event)">
-                    <button onclick="sendMessage()">Send</button>
+        <div class="status-bar">
+            <div class="status-indicator">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Connecting...</span>
+            </div>
+            <div id="connectionTime"></div>
+        </div>
+
+        <div class="main-content">
+            <div class="chat-area">
+                <div class="messages" id="messages">
+                    <div class="message system">
+                        <div class="message-avatar">🤖</div>
+                        <div class="message-content">
+                            Hey! I'm your MCP bot. I can help you interact with 51 different API tools. 
+                            Just tell me what you need and I'll figure out the right tools to use.
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="typing-indicator" id="typingIndicator">
+                    Bot is thinking...
+                </div>
+
+                <div class="input-area">
+                    <div class="input-container">
+                        <input type="text" id="messageInput" class="message-input" 
+                               placeholder="Ask me anything... (e.g., 'Show me all pending payments')" 
+                               autocomplete="off">
+                        <button id="sendButton" class="send-button">Send</button>
+                    </div>
                 </div>
             </div>
-            
+
             <div class="sidebar">
-                <div class="credentials-form">
+                <div class="credentials-section">
                     <h3>🔐 API Credentials</h3>
                     <div class="form-group">
-                        <label>Username:</label>
-                        <input type="text" id="username" placeholder="API Username">
+                        <label>Username</label>
+                        <input type="text" id="username" placeholder="your-username">
                     </div>
                     <div class="form-group">
-                        <label>Password:</label>
-                        <input type="password" id="password" placeholder="API Password">
+                        <label>Password</label>
+                        <input type="password" id="password" placeholder="your-password">
                     </div>
                     <div class="form-group">
-                        <label>API Key Name:</label>
+                        <label>API Key Name</label>
                         <input type="text" id="apiKeyName" placeholder="X-API-Key">
                     </div>
                     <div class="form-group">
-                        <label>API Key Value:</label>
-                        <input type="password" id="apiKeyValue" placeholder="Your API Key">
+                        <label>API Key Value</label>
+                        <input type="text" id="apiKeyValue" placeholder="your-api-key">
                     </div>
                     <div class="form-group">
-                        <label>Login URL:</label>
-                        <input type="text" id="loginUrl" placeholder="http://localhost:8080/auth/login">
+                        <label>Login URL</label>
+                        <input type="text" id="loginUrl" placeholder="https://api.example.com/login">
                     </div>
                     <div class="form-group">
-                        <label>Base URL:</label>
-                        <input type="text" id="baseUrl" placeholder="http://localhost:8080">
+                        <label>Base URL</label>
+                        <input type="text" id="baseUrl" placeholder="https://api.example.com">
                     </div>
-                    <button class="btn" onclick="setCredentials()">Set Credentials</button>
+                    <button id="setCredentials" class="btn btn-primary">Set Credentials</button>
+                    <button id="clearConversation" class="btn btn-secondary">Clear Chat</button>
                 </div>
-                
-                <div class="tools-list">
-                    <h3>🔧 Available Tools</h3>
-                    <div id="toolsList">Loading...</div>
-                    <button class="btn" onclick="loadTools()">Refresh Tools</button>
+
+                <div class="tools-section">
+                    <h3>🛠️ Available Tools</h3>
+                    <div id="toolsList">
+                        <div class="tool-item">
+                            <div class="tool-name">Loading tools...</div>
+                            <div class="tool-desc">Please wait while I load the available API tools.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="capabilities" id="capabilities" style="display: none;">
+                    <strong>✨ Capabilities:</strong>
+                    <div id="capabilitiesList"></div>
                 </div>
             </div>
         </div>
     </div>
 
+    <button class="scroll-to-bottom" id="scrollToBottom">↓</button>
+
     <script>
         const socket = io();
-        
+        const messagesDiv = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const scrollToBottomBtn = document.getElementById('scrollToBottom');
+        const capabilitiesDiv = document.getElementById('capabilities');
+        const capabilitiesList = document.getElementById('capabilitiesList');
+
+        let isTyping = false;
+
+        // Connection events
         socket.on('connect', function() {
-            addMessage('system', 'Connected to server');
+            statusDot.classList.add('connected');
+            statusText.textContent = 'Connected';
+            document.getElementById('connectionTime').textContent = new Date().toLocaleTimeString();
         });
-        
-        socket.on('connected', function(data) {
-            updateStatus('🟢 ' + data.message);
+
+        socket.on('disconnect', function() {
+            statusDot.classList.remove('connected');
+            statusText.textContent = 'Disconnected';
         });
-        
-        socket.on('credentials_status', function(data) {
-            updateStatus('🔐 ' + data.message);
-        });
-        
+
+        // Message events
         socket.on('user_message', function(data) {
             addMessage('user', data.message);
         });
-        
-        socket.on('bot_message', function(data) {
+
+        socket.on('assistant_message', function(data) {
+            hideTyping();
             addMessage('bot', data.message);
         });
-        
+
         socket.on('system_message', function(data) {
             addMessage('system', data.message);
         });
-        
+
         socket.on('error', function(data) {
             addMessage('error', data.message);
         });
-        
-        socket.on('tool_call', function(data) {
-            const toolMsg = `🔧 Tool: ${data.tool_name}`;
+
+        socket.on('tool_execution', function(data) {
+            const statusIcon = data.status.includes('Success') ? '✅' : '❌';
+            const toolMsg = `${statusIcon} ${data.tool_name} - ${data.status}`;
             addMessage('tool', toolMsg);
+            
+            if (data.args && Object.keys(data.args).length > 0) {
+                const argsMsg = `Args: ${JSON.stringify(data.args, null, 2)}`;
+                addMessage('tool', argsMsg);
+            }
+            
+            if (data.error) {
+                addMessage('error', `Error: ${data.error}`);
+            }
         });
-        
-        socket.on('capabilities_demonstrated', function(data) {
-            const capMsg = `✨ Capabilities: ${data.capabilities.descriptions.join(', ')}`;
-            addMessage('capabilities', capMsg);
+
+        socket.on('capabilities', function(data) {
+            capabilitiesDiv.style.display = 'block';
+            capabilitiesList.innerHTML = data.capabilities.join(', ');
         });
-        
+
         socket.on('tools_list', function(data) {
             displayTools(data.tools);
         });
-        
+
+        // UI functions
         function addMessage(type, message) {
-            const messagesDiv = document.getElementById('messages');
             const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${type}-message`;
-            messageDiv.textContent = message;
+            messageDiv.className = `message ${type}`;
+            
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            
+            const content = document.createElement('div');
+            content.className = 'message-content';
+            content.textContent = message;
+            
+            switch(type) {
+                case 'user':
+                    avatar.textContent = '👤';
+                    break;
+                case 'bot':
+                    avatar.textContent = '🤖';
+                    break;
+                case 'system':
+                    avatar.textContent = 'ℹ️';
+                    break;
+                case 'error':
+                    avatar.textContent = '⚠️';
+                    break;
+                case 'tool':
+                    avatar.textContent = '🔧';
+                    break;
+            }
+            
+            messageDiv.appendChild(avatar);
+            messageDiv.appendChild(content);
             messagesDiv.appendChild(messageDiv);
+            
+            scrollToBottom();
+        }
+
+        function displayTools(tools) {
+            const toolsList = document.getElementById('toolsList');
+            if (tools.length === 0) {
+                toolsList.innerHTML = '<div class="tool-item"><div class="tool-name">No tools available</div></div>';
+                return;
+            }
+            
+            toolsList.innerHTML = tools.slice(0, 10).map(tool => 
+                `<div class="tool-item">
+                    <div class="tool-name">${tool.function.name}</div>
+                    <div class="tool-desc">${tool.function.description}</div>
+                </div>`
+            ).join('');
+            
+            if (tools.length > 10) {
+                toolsList.innerHTML += `<div class="tool-item"><div class="tool-name">... and ${tools.length - 10} more tools</div></div>`;
+            }
+        }
+
+        function showTyping() {
+            if (!isTyping) {
+                isTyping = true;
+                typingIndicator.classList.add('show');
+                scrollToBottom();
+            }
+        }
+
+        function hideTyping() {
+            isTyping = false;
+            typingIndicator.classList.remove('show');
+        }
+
+        function scrollToBottom() {
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
-        
-        function updateStatus(status) {
-            document.getElementById('status').textContent = status;
+
+        function updateScrollButton() {
+            const isAtBottom = messagesDiv.scrollTop + messagesDiv.clientHeight >= messagesDiv.scrollHeight - 10;
+            scrollToBottomBtn.classList.toggle('show', !isAtBottom);
         }
-        
-        function sendMessage() {
-            const input = document.getElementById('messageInput');
-            const message = input.value.trim();
-            if (message) {
-                socket.emit('message', {message: message});
-                input.value = '';
-            }
-        }
-        
-        function handleKeyPress(event) {
-            if (event.key === 'Enter') {
+
+        // Event listeners
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
                 sendMessage();
             }
+        });
+
+        document.getElementById('setCredentials').addEventListener('click', setCredentials);
+        document.getElementById('clearConversation').addEventListener('click', clearConversation);
+        scrollToBottomBtn.addEventListener('click', scrollToBottom);
+        messagesDiv.addEventListener('scroll', updateScrollButton);
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (message) {
+                socket.emit('message', {message: message});
+                messageInput.value = '';
+                showTyping();
+            }
         }
-        
+
         function setCredentials() {
             const credentials = {
                 username: document.getElementById('username').value,
@@ -363,30 +658,25 @@
             };
             socket.emit('set_credentials', credentials);
         }
-        
-        function loadTools() {
-            socket.emit('get_tools');
+
+        function clearConversation() {
+            messagesDiv.innerHTML = `
+                <div class="message system">
+                    <div class="message-avatar">🤖</div>
+                    <div class="message-content">
+                        Chat cleared! How can I help you today?
+                    </div>
+                </div>
+            `;
+            socket.emit('clear_conversation');
         }
-        
-        function displayTools(tools) {
-            const toolsDiv = document.getElementById('toolsList');
-            if (tools.length === 0) {
-                toolsDiv.innerHTML = 'No tools available';
-                return;
-            }
-            
-            toolsDiv.innerHTML = tools.map(tool => 
-                `<div style="margin-bottom: 10px; padding: 8px; background: #f8f9fa; border-radius: 5px; font-size: 12px;">
-                    <strong>${tool.function.name}</strong><br>
-                    <small>${tool.function.description}</small>
-                </div>`
-            ).join('');
-        }
-        
+
         // Load tools on page load
-        window.onload = function() {
-            setTimeout(loadTools, 2000);
-        };
+        window.addEventListener('load', function() {
+            setTimeout(() => {
+                socket.emit('get_tools');
+            }, 1000);
+        });
     </script>
 </body>
 </html>
