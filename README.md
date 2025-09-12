@@ -34,13 +34,14 @@ $env:AZURE_TENANT_ID="your-tenant-id"
 python intelligent_bot.py
 ```
 
-### Option 3: Web UI
+### Option 3: Web UI (Demo)
 ```bash
 python web_ui_ws.py
 ```
 - Open http://localhost:5000
 - Configure credentials in the UI
 - Chat with the intelligent bot
+- Simplified single-user demo version
 
 ## 🎯 Example Interactions
 
