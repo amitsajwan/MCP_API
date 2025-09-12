@@ -104,6 +104,24 @@ class ModernLLMService:
                     logger.info(f"[MCP_SERVICE] Tool args: {tool_args}")
                     
                     try:
+                        # Validate tool exists before calling
+                        if not await self.validate_tool_exists(tool_name):
+                            similar_tools = await self.suggest_similar_tools(tool_name)
+                            error_msg = f"Tool '{tool_name}' not found. "
+                            if similar_tools:
+                                error_msg += f"Did you mean one of these: {', '.join(similar_tools)}?"
+                            else:
+                                error_msg += "Please check the available tools list."
+                            
+                            tool_calls.append({
+                                "tool_name": tool_name,
+                                "args": tool_args,
+                                "success": False,
+                                "error": error_msg,
+                                "tool_call_id": tool_call_id
+                            })
+                            continue
+                        
                         # Call MCP tool
                         result = await self._mcp_client.call_tool(tool_name, tool_args)
                         
@@ -123,11 +141,17 @@ class ModernLLMService:
                         
                         # Provide more helpful error messages for common issues
                         if "unexpected_keyword_argument" in error_msg:
-                            error_msg = f"Invalid parameter: {error_msg}. Please check the tool documentation for correct parameters."
+                            error_msg = f"Invalid parameter: {error_msg}. The tool '{tool_name}' doesn't accept the provided parameters. Please check the tool documentation for correct parameters."
                         elif "validation error" in error_msg:
-                            error_msg = f"Parameter validation failed: {error_msg}. Please check parameter types and values."
+                            error_msg = f"Parameter validation failed: {error_msg}. Please check parameter types and values according to the API specification."
                         elif "not found" in error_msg.lower():
-                            error_msg = f"Tool not found: {tool_name}. This tool may not be available."
+                            error_msg = f"Tool not found: {tool_name}. This tool may not be available or the tool name may be incorrect."
+                        elif "enum" in error_msg.lower():
+                            error_msg = f"Invalid enum value: {error_msg}. Please check the allowed values for this parameter."
+                        elif "required" in error_msg.lower():
+                            error_msg = f"Missing required parameter: {error_msg}. Please provide all required parameters."
+                        else:
+                            error_msg = f"Tool execution failed: {error_msg}. Please check the tool parameters and try again."
                         
                         tool_calls.append({
                             "tool_name": tool_name,
@@ -190,7 +214,7 @@ class ModernLLMService:
         messages = [
             {
                 "role": "system",
-                "content": "You are a helpful financial API assistant. You can help users with payments, settlements, trading, and mailbox operations. Use the available tools to provide accurate information and perform actions."
+                "content": "You are a helpful API assistant that can work with any OpenAPI specification. You have access to various API tools and can help users with data retrieval, creation, modification, and deletion operations. Always use the available tools to provide accurate information and perform actions. If a tool call fails, provide helpful error messages and suggest alternatives when possible."
             }
         ]
         
@@ -235,24 +259,40 @@ class ModernLLMService:
         return tool_messages
     
     def _analyze_capabilities(self, tool_calls: List[Dict[str, Any]], user_message: str) -> Dict[str, List[str]]:
-        """Analyze what capabilities were demonstrated."""
+        """Analyze what capabilities were demonstrated based on tool names and API patterns."""
         capabilities = []
         
         for tool_call in tool_calls:
             tool_name = tool_call["tool_name"]
             
-            if "payment" in tool_name.lower():
-                capabilities.append("Payment processing and management")
-            elif "settlement" in tool_name.lower():
+            # Generic capability detection based on common API patterns
+            if any(keyword in tool_name.lower() for keyword in ["payment", "cash", "transaction"]):
+                capabilities.append("Payment processing and cash management")
+            elif any(keyword in tool_name.lower() for keyword in ["settlement", "cls", "clearing"]):
                 capabilities.append("Settlement and clearing operations")
-            elif "trade" in tool_name.lower():
+            elif any(keyword in tool_name.lower() for keyword in ["trade", "portfolio", "position", "security"]):
                 capabilities.append("Trading and portfolio management")
-            elif "mailbox" in tool_name.lower() or "message" in tool_name.lower():
+            elif any(keyword in tool_name.lower() for keyword in ["mailbox", "message", "notification", "alert"]):
                 capabilities.append("Mailbox and notification management")
-            elif "alert" in tool_name.lower():
-                capabilities.append("Alert and monitoring systems")
-            elif "account" in tool_name.lower():
-                capabilities.append("Account and balance management")
+            elif any(keyword in tool_name.lower() for keyword in ["account", "balance", "user"]):
+                capabilities.append("Account and user management")
+            elif any(keyword in tool_name.lower() for keyword in ["get", "list", "retrieve"]):
+                capabilities.append("Data retrieval and querying")
+            elif any(keyword in tool_name.lower() for keyword in ["create", "add", "post"]):
+                capabilities.append("Data creation and submission")
+            elif any(keyword in tool_name.lower() for keyword in ["update", "modify", "put", "patch"]):
+                capabilities.append("Data modification and updates")
+            elif any(keyword in tool_name.lower() for keyword in ["delete", "remove", "cancel"]):
+                capabilities.append("Data deletion and cancellation")
+            else:
+                # Generic capability based on tool name structure
+                if "_" in tool_name:
+                    parts = tool_name.split("_")
+                    if len(parts) >= 2:
+                        api_domain = parts[0] if parts[0] not in ["com", "api", "key"] else parts[1]
+                        capabilities.append(f"{api_domain.title()} API operations")
+                else:
+                    capabilities.append("API operations")
         
         return {"descriptions": list(set(capabilities))}
     
@@ -262,6 +302,88 @@ class ModernLLMService:
             return []
         
         return self._tools
+    
+    async def validate_tool_exists(self, tool_name: str) -> bool:
+        """Check if a tool exists in the available tools list."""
+        if not self._tools:
+            return False
+        
+        return any(tool.get("function", {}).get("name") == tool_name for tool in self._tools)
+    
+    async def get_tool_info(self, tool_name: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a specific tool."""
+        if not self._tools:
+            return None
+        
+        for tool in self._tools:
+            if tool.get("function", {}).get("name") == tool_name:
+                return tool
+        
+        return None
+    
+    async def suggest_similar_tools(self, tool_name: str) -> List[str]:
+        """Suggest similar tool names if a tool is not found."""
+        if not self._tools:
+            return []
+        
+        available_tools = [tool.get("function", {}).get("name") for tool in self._tools if tool.get("function", {}).get("name")]
+        
+        # Simple similarity matching
+        similar_tools = []
+        tool_name_lower = tool_name.lower()
+        
+        for available_tool in available_tools:
+            if available_tool:
+                # Check for partial matches
+                if any(part in available_tool.lower() for part in tool_name_lower.split("_")):
+                    similar_tools.append(available_tool)
+                elif any(part in tool_name_lower for part in available_tool.lower().split("_")):
+                    similar_tools.append(available_tool)
+        
+        return similar_tools[:5]  # Return top 5 suggestions
+    
+    async def get_api_summary(self) -> Dict[str, Any]:
+        """Get a summary of all available APIs and their capabilities."""
+        if not self._initialized or not self._tools:
+            return {"apis": [], "total_tools": 0}
+        
+        # Group tools by API domain
+        api_groups = {}
+        for tool in self._tools:
+            tool_name = tool.get("function", {}).get("name", "")
+            if tool_name:
+                # Extract API domain from tool name
+                parts = tool_name.split("_")
+                api_domain = parts[0] if parts else "unknown"
+                
+                if api_domain not in api_groups:
+                    api_groups[api_domain] = {
+                        "domain": api_domain,
+                        "tools": [],
+                        "capabilities": []
+                    }
+                
+                api_groups[api_domain]["tools"].append(tool_name)
+                
+                # Determine capability based on tool name
+                if any(keyword in tool_name.lower() for keyword in ["get", "list", "retrieve"]):
+                    api_groups[api_domain]["capabilities"].append("Data Retrieval")
+                elif any(keyword in tool_name.lower() for keyword in ["create", "add", "post"]):
+                    api_groups[api_domain]["capabilities"].append("Data Creation")
+                elif any(keyword in tool_name.lower() for keyword in ["update", "modify", "put", "patch"]):
+                    api_groups[api_domain]["capabilities"].append("Data Modification")
+                elif any(keyword in tool_name.lower() for keyword in ["delete", "remove", "cancel"]):
+                    api_groups[api_domain]["capabilities"].append("Data Deletion")
+        
+        # Remove duplicates from capabilities
+        for api_domain in api_groups:
+            api_groups[api_domain]["capabilities"] = list(set(api_groups[api_domain]["capabilities"]))
+        
+        return {
+            "apis": list(api_groups.values()),
+            "total_tools": len(self._tools),
+            "total_apis": len(api_groups)
+        }
     
     async def cleanup(self):
         """Cleanup resources."""
