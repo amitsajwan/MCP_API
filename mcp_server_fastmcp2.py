@@ -379,7 +379,7 @@ class FastMCP2Server:
         arguments = {{}}
 {chr(10).join([f'        if {param} is not None: arguments["{param}"] = {param}' for param in param_names])}
         
-        logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {{list(arguments.keys())}}")
+        logger.info(f"Executing FastMCP 2.0 tool: {{tool_name}} with arguments: {{list(arguments.keys())}}")
         
         # Get tool info from mapping
         tool_info = self.tool_name_mapping[tool_name]
@@ -396,17 +396,17 @@ class FastMCP2Server:
         
         if result.get("status") == "success":
             response_text = json.dumps(result.get("data", result), indent=2)
-            logger.info(f"Tool {tool_name} executed successfully")
+            logger.info(f"Tool {{tool_name}} executed successfully")
             return response_text
         else:
             error_msg = f"Tool execution failed: {{result.get('message', 'Unknown error')}}"
             if result.get('status_code'):
                 error_msg += f" (HTTP {{result['status_code']}})"
-            logger.error(f"Tool {tool_name} failed: {{error_msg}}")
+            logger.error(f"Tool {{tool_name}} failed: {{error_msg}}")
             return error_msg
             
     except Exception as e:
-        logger.error(f"Error executing tool {tool_name}: {{e}}", exc_info=True)
+        logger.error(f"Error executing tool {{tool_name}}: {{e}}", exc_info=True)
         return f"Error: {{str(e)}}"
 """
             
