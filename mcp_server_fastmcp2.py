@@ -401,7 +401,7 @@ class FastMCP2Server:
         # Create the tool function
         tool_func = create_tool_function(tool_name)
         
-        # Register with FastMCP 2.0 using the full schema
+        # Register with FastMCP 2.0 using the correct schema format
         app.tool(
             name=tool_name, 
             description=tool_description,
