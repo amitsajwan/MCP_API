@@ -1,6 +1,7 @@
+ 
 #!/usr/bin/env python3
 """
-FastMCP 2.0 Server - Proper Implementation
+FastMCP 2.0 Server - Proper Implementation with Tool Name Length Fix
 """
 
 import os
@@ -11,6 +12,7 @@ import re
 import logging
 import asyncio
 import argparse
+import hashlib
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import requests
@@ -18,8 +20,6 @@ from dataclasses import dataclass
 
 # FastMCP 2.0 imports
 from fastmcp import FastMCP
-
-# OpenAPI imports - using manual parsing with better schema handling
 
 # Import config or create default
 try:
@@ -56,13 +56,13 @@ class APISpec:
     spec: Dict[str, Any]
     base_url: str
     file_path: Optional[str] = None
-    openapi_spec: Any = None  # The parsed OpenAPI spec object
+    openapi_spec: Any = None
 
 # Create FastMCP app
 app = FastMCP("openapi-mcp-server")
 
 class FastMCP2Server:
-    """FastMCP 2.0 Server implementation."""
+    """FastMCP 2.0 Server implementation with tool name length fixes."""
     
     def __init__(self):
         logger.info("🚀 Initializing FastMCP 2.0 Server...")
@@ -73,6 +73,7 @@ class FastMCP2Server:
         self.api_specs = {}
         self.sessions = {}
         self.session_id = None
+        self.tool_name_mapping = {}  # Map shortened names to full info
         
         # Authentication state
         self.username = os.getenv('API_USERNAME')
@@ -93,6 +94,53 @@ class FastMCP2Server:
             logger.info(f"🔐 Credentials loaded from environment for user: {self.username}")
         else:
             logger.info("🔓 No credentials found in environment - use set_credentials tool")
+    
+    def _generate_short_tool_name(self, spec_name: str, operation_id: str, method: str, path: str) -> str:
+        """Generate a short tool name that fits OpenAI's 64 character limit"""
+        # Start with the basic combination
+        base_name = f"{spec_name}_{operation_id}"
+        
+        # Clean up the name
+        base_name = re.sub(r'[^a-zA-Z0-9_]', '_', base_name)
+        
+        # If it's already short enough, return it
+        if len(base_name) <= 64:
+            return base_name
+        
+        # If too long, try different strategies
+        
+        # Strategy 1: Shorten spec_name and operation_id
+        max_spec_len = 20
+        max_op_len = 40
+        
+        short_spec = spec_name[:max_spec_len] if len(spec_name) > max_spec_len else spec_name
+        short_op = operation_id[:max_op_len] if len(operation_id) > max_op_len else operation_id
+        
+        candidate = f"{short_spec}_{short_op}"
+        candidate = re.sub(r'[^a-zA-Z0-9_]', '_', candidate)
+        
+        if len(candidate) <= 64:
+            return candidate
+        
+        # Strategy 2: Use method + path hash for uniqueness
+        path_clean = re.sub(r'[^a-zA-Z0-9]', '', path)
+        method_path = f"{method}_{path_clean}"
+        
+        if len(method_path) <= 30:
+            candidate = f"{short_spec}_{method_path}"[:64]
+        else:
+            # Strategy 3: Use hash for very long names
+            full_name = f"{spec_name}_{operation_id}_{method}_{path}"
+            name_hash = hashlib.md5(full_name.encode()).hexdigest()[:8]
+            candidate = f"{short_spec}_{method}_{name_hash}"
+        
+        # Ensure it's not too long and clean
+        candidate = re.sub(r'[^a-zA-Z0-9_]', '_', candidate)[:64]
+        
+        # Remove trailing underscores
+        candidate = candidate.rstrip('_')
+        
+        return candidate
     
     def _load_api_specs(self):
         """Load OpenAPI specifications from directory with enhanced schema handling."""
@@ -115,7 +163,7 @@ class FastMCP2Server:
                     spec=spec_data,
                     base_url=base_url,
                     file_path=str(spec_file),
-                    openapi_spec=None  # We'll use enhanced manual parsing
+                    openapi_spec=None
                 )
                 
                 self.api_specs[spec_name] = api_spec
@@ -248,7 +296,7 @@ class FastMCP2Server:
                 return json.dumps({"status": "error", "message": str(e)}, indent=2)
     
     def _register_spec_tools(self, spec_name: str, api_spec: APISpec):
-        """Register tools for a specific API specification with enhanced schema handling."""
+        """Register tools for a specific API specification with tool name length fixes."""
         paths = api_spec.spec.get('paths', {})
         tool_count = 0
         
@@ -261,12 +309,21 @@ class FastMCP2Server:
         logger.info(f"📋 Registered {tool_count} tools from {spec_name} API spec")
     
     def _register_api_tool_enhanced(self, spec_name: str, method: str, path: str, operation: Dict[str, Any], api_spec: APISpec):
-        """Register a single API tool with enhanced schema handling including enums and $ref resolution."""
+        """Register a single API tool with enhanced schema handling and proper tool name length management."""
         operation_id = operation.get('operationId', f"{method}_{path.replace('/', '_').strip('_')}")
-        tool_name = f"{spec_name}_{operation_id}"
-
-        # Clean up tool name
-        tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
+        
+        # FIXED: Generate short tool name that fits OpenAI limits
+        tool_name = self._generate_short_tool_name(spec_name, operation_id, method, path)
+        
+        # Store mapping for execution
+        self.tool_name_mapping[tool_name] = {
+            'spec_name': spec_name,
+            'method': method,
+            'path': path,
+            'operation': operation,
+            'base_url': api_spec.base_url,
+            'original_operation_id': operation_id
+        }
 
         # Build description from OpenAPI operation
         summary = operation.get('summary', '')
@@ -297,14 +354,24 @@ class FastMCP2Server:
                 if param_enum:
                     tool_description += f" [Options: {', '.join(map(str, param_enum))}]"
 
-        # Create the tool function with Dict parameter
-        def create_tool_function(tool_name, spec_name, method, path, base_url):
+        # Create the tool function
+        def create_tool_function(tool_name):
             async def api_tool_function(arguments: Dict[str, Any]) -> str:
                 try:
                     logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {list(arguments.keys())}")
                     
+                    # Get tool info from mapping
+                    tool_info = self.tool_name_mapping[tool_name]
+                    
                     # Execute the tool
-                    result = self._execute_tool(tool_name, spec_name, method, path, base_url, arguments)
+                    result = self._execute_tool(
+                        tool_name, 
+                        tool_info['spec_name'], 
+                        tool_info['method'], 
+                        tool_info['path'], 
+                        tool_info['base_url'], 
+                        arguments
+                    )
                     
                     if result.get("status") == "success":
                         response_text = json.dumps(result.get("data", result), indent=2)
@@ -324,7 +391,7 @@ class FastMCP2Server:
             return api_tool_function
         
         # Create the tool function
-        tool_func = create_tool_function(tool_name, spec_name, method, path, api_spec.base_url)
+        tool_func = create_tool_function(tool_name)
         
         # Register with FastMCP 2.0 using the full schema
         app.tool(
@@ -332,7 +399,9 @@ class FastMCP2Server:
             description=tool_description,
             annotations={"input_schema": input_schema}
         )(tool_func)
-        logger.debug(f"🔧 Registered FastMCP 2.0 tool: {tool_name} with enhanced schema")
+        
+        # Log with length info
+        logger.debug(f"🔧 Registered tool: {tool_name} (len={len(tool_name)}) -> {method} {path}")
     
     def _build_input_schema_enhanced(self, operation: Dict[str, Any], path: str, method: str, spec_data: Dict[str, Any]) -> Dict[str, Any]:
         """Build input schema from OpenAPI operation with enhanced $ref resolution and enum handling."""
@@ -418,172 +487,6 @@ class FastMCP2Server:
                 # Recursively resolve any nested $ref references
                 return self._resolve_schema_ref_enhanced(referenced_schema, spec_data)
         
-        logger.warning(f"Could not resolve $ref: {ref_path}")
-        return {
-            "type": "object",
-            "description": f"Referenced schema: {ref_path}"
-        }
-    
-    
-    def _register_api_tool(self, spec_name: str, method: str, path: str, operation: Dict[str, Any], base_url: str):
-        """Register a single API tool with FastMCP 2.0."""
-        operation_id = operation.get('operationId', f"{method}_{path.replace('/', '_').strip('_')}")
-        tool_name = f"{spec_name}_{operation_id}"
-
-        # Clean up tool name
-        tool_name = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name)
-
-        # Build description
-        summary = operation.get('summary', '')
-        description = operation.get('description', '')
-        tags = operation.get('tags', [])
-
-        tool_description = f"{method.upper()} {path}"
-        if summary:
-            tool_description += f"\n\nSummary: {summary}"
-        if description:
-            tool_description += f"\n\nDescription: {description}"
-        if tags:
-            tool_description += f"\n\nTags: {', '.join(tags)}"
-
-        # Extract full OpenAPI schema for parameters
-        input_schema = self._build_input_schema(operation, path, method)
-        
-        # Add schema information to description
-        if input_schema.get('properties'):
-            tool_description += f"\n\nParameters:"
-            for param_name, param_schema in input_schema['properties'].items():
-                param_type = param_schema.get('type', 'string')
-                param_desc = param_schema.get('description', '')
-                param_enum = param_schema.get('enum', [])
-                required = param_name in input_schema.get('required', [])
-                
-                tool_description += f"\n- {param_name} ({param_type}){'*' if required else ''}: {param_desc}"
-                if param_enum:
-                    tool_description += f" [Options: {', '.join(map(str, param_enum))}]"
-
-        # Create the tool function with Dict parameter
-        def create_tool_function(tool_name, spec_name, method, path, base_url):
-            async def api_tool_function(arguments: Dict[str, Any]) -> str:
-                try:
-                    logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {list(arguments.keys())}")
-                    
-                    # Execute the tool
-                    result = self._execute_tool(tool_name, spec_name, method, path, base_url, arguments)
-                    
-                    if result.get("status") == "success":
-                        response_text = json.dumps(result.get("data", result), indent=2)
-                        logger.info(f"Tool {tool_name} executed successfully")
-                        return response_text
-                    else:
-                        error_msg = f"Tool execution failed: {result.get('message', 'Unknown error')}"
-                        if result.get('status_code'):
-                            error_msg += f" (HTTP {result['status_code']})"
-                        logger.error(f"Tool {tool_name} failed: {error_msg}")
-                        return error_msg
-                        
-                except Exception as e:
-                    logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
-                    return f"Error: {str(e)}"
-            
-            return api_tool_function
-        
-        # Create the tool function
-        tool_func = create_tool_function(tool_name, spec_name, method, path, base_url)
-        
-        # Register with FastMCP 2.0 using the full schema
-        app.tool(
-            name=tool_name, 
-            description=tool_description,
-            annotations={"input_schema": input_schema}
-        )(tool_func)
-        logger.debug(f"🔧 Registered FastMCP 2.0 tool: {tool_name} with full schema")
-    
-    def _build_input_schema(self, operation: Dict[str, Any], path: str, method: str) -> Dict[str, Any]:
-        """Build input schema from OpenAPI operation with full $ref resolution."""
-        schema = {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-        
-        # Process path parameters
-        path_params = re.findall(r'\{([^}]+)\}', path)
-        for param_name in path_params:
-            schema["properties"][param_name] = {
-                "type": "string",
-                "description": f"Path parameter: {param_name}"
-            }
-            schema["required"].append(param_name)
-        
-        # Process query parameters
-        parameters = operation.get('parameters', [])
-        for param in parameters:
-            if param.get('in') == 'query':
-                param_name = param['name']
-                param_schema = self._resolve_schema_ref(param.get('schema', {}))
-                
-                schema["properties"][param_name] = {
-                    "type": param_schema.get('type', 'string'),
-                    "description": param.get('description', ''),
-                    "enum": param_schema.get('enum'),
-                    "minimum": param_schema.get('minimum'),
-                    "maximum": param_schema.get('maximum'),
-                    "format": param_schema.get('format'),
-                    "pattern": param_schema.get('pattern'),
-                    "items": param_schema.get('items'),
-                    "default": param_schema.get('default'),
-                    "example": param_schema.get('example')
-                }
-                
-                # Remove None values
-                schema["properties"][param_name] = {k: v for k, v in schema["properties"][param_name].items() if v is not None}
-                
-                if param.get('required', False):
-                    schema["required"].append(param_name)
-        
-        # Process request body
-        request_body = operation.get('requestBody', {})
-        if request_body:
-            content = request_body.get('content', {})
-            if 'application/json' in content:
-                json_schema = content['application/json'].get('schema', {})
-                if json_schema:
-                    # Resolve $ref references in request body
-                    resolved_schema = self._resolve_schema_ref(json_schema)
-                    schema["properties"]["body"] = resolved_schema
-                    
-                    if request_body.get('required', False):
-                        schema["required"].append("body")
-        
-        # Clean up empty required list
-        if not schema["required"]:
-            del schema["required"]
-        
-        return schema
-    
-    def _resolve_schema_ref(self, schema: Dict[str, Any]) -> Dict[str, Any]:
-        """Resolve $ref references in OpenAPI schema."""
-        if '$ref' not in schema:
-            return schema
-        
-        ref_path = schema['$ref']
-        if ref_path.startswith('#/components/schemas/'):
-            # Extract schema name from reference
-            schema_name = ref_path.split('/')[-1]
-            
-            # Find the referenced schema in all loaded specs
-            for spec_name, api_spec in self.api_specs.items():
-                spec_data = api_spec.spec
-                components = spec_data.get('components', {})
-                schemas = components.get('schemas', {})
-                
-                if schema_name in schemas:
-                    referenced_schema = schemas[schema_name]
-                    # Recursively resolve any nested $ref references
-                    return self._resolve_schema_ref(referenced_schema)
-        
-        # If reference cannot be resolved, return a generic object
         logger.warning(f"Could not resolve $ref: {ref_path}")
         return {
             "type": "object",
