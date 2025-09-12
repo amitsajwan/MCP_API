@@ -43,7 +43,7 @@ def count_tokens(text: str) -> int:
     return len(text.split())
 
 def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
-    """Truncate huge tool responses while preserving JSON structure."""
+    """Truncate huge tool responses while preserving JSON structure for LLM consumption."""
     
     # Handle CallToolResult objects specifically
     if hasattr(obj, 'isError') and hasattr(obj, 'content'):
@@ -82,9 +82,15 @@ def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
     
     tokens = count_tokens(text)
     if tokens <= max_tokens:
-        return obj
+        # Ensure the object is JSON serializable before returning
+        try:
+            json.dumps(obj)
+            return obj
+        except (TypeError, ValueError):
+            # If not serializable, convert to a serializable format
+            return {"data": str(obj), "type": type(obj).__name__}
     
-    # Truncate while preserving JSON structure
+    # Truncate while preserving JSON structure and ensuring serializability
     if isinstance(obj, list):
         # For lists, take a subset and add truncation info
         subset = obj[:100] if len(obj) > 100 else obj
@@ -112,7 +118,7 @@ def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
                 "note": f"Response truncated from {len(str_repr)} characters to 5000 characters for safety.",
                 "truncated_text": str_repr[:5000]
             }
-        return obj
+        return {"data": str_repr, "type": type(obj).__name__}
 
 
 async def create_azure_client() -> AsyncAzureOpenAI:
