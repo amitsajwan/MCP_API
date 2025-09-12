@@ -298,7 +298,7 @@
             addMessage('user', data.message);
         });
         
-        socket.on('bot_message', function(data) {
+        socket.on('assistant_message', function(data) {
             addMessage('bot', data.message);
         });
         
@@ -310,13 +310,26 @@
             addMessage('error', data.message);
         });
         
-        socket.on('tool_call', function(data) {
-            const toolMsg = `🔧 Tool: ${data.tool_name}`;
+        socket.on('tool_execution', function(data) {
+            const statusIcon = data.status.includes('Success') ? '✅' : '❌';
+            const toolMsg = `${statusIcon} Tool: ${data.tool_name} - ${data.status}`;
             addMessage('tool', toolMsg);
+            
+            // Show tool arguments if available
+            if (data.args && Object.keys(data.args).length > 0) {
+                const argsMsg = `   Args: ${JSON.stringify(data.args)}`;
+                addMessage('tool', argsMsg);
+            }
+            
+            // Show error if tool failed
+            if (data.error) {
+                const errorMsg = `   Error: ${data.error}`;
+                addMessage('error', errorMsg);
+            }
         });
         
-        socket.on('capabilities_demonstrated', function(data) {
-            const capMsg = `✨ Capabilities: ${data.capabilities.descriptions.join(', ')}`;
+        socket.on('capabilities', function(data) {
+            const capMsg = `✨ Capabilities: ${data.capabilities.join(', ')}`;
             addMessage('capabilities', capMsg);
         });
         

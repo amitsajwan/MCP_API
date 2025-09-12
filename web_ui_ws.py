@@ -61,23 +61,31 @@ class MCPDemoService:
     async def process_message(self, message):
         """Process user message with MCP service"""
         if not self.initialized or not self.service:
-            return "❌ MCP service not initialized. Please refresh the page."
+            return {
+                "response": "❌ MCP service not initialized. Please refresh the page.",
+                "tool_calls": [],
+                "capabilities": []
+            }
         
         try:
             # Add user message to conversation
             self.conversation.append({"role": "user", "content": message})
             
             # Process with MCP service
-            response = await self.service.process_message(message, self.conversation)
+            result = await self.service.process_message(message, self.conversation)
             
             # Add assistant response to conversation
-            self.conversation.append({"role": "assistant", "content": response})
+            self.conversation.append({"role": "assistant", "content": result.get("response", "")})
             
-            return response
+            return result
             
         except Exception as e:
             logger.error(f"❌ [DEMO] Error processing message: {e}")
-            return f"❌ Error processing message: {str(e)}"
+            return {
+                "response": f"❌ Error processing message: {str(e)}",
+                "tool_calls": [],
+                "capabilities": []
+            }
 
 # Create single instance (no global variables)
 demo_service = MCPDemoService()
@@ -139,8 +147,39 @@ def handle_message(data):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            response = loop.run_until_complete(demo_service.process_message(message))
+            result = loop.run_until_complete(demo_service.process_message(message))
+            
+            # Extract components from result
+            response = result.get("response", "")
+            tool_calls = result.get("tool_calls", [])
+            capabilities = result.get("capabilities", {})
+            
+            # Emit tool execution details
+            if tool_calls:
+                logger.info(f"🔧 [DEMO] Executed {len(tool_calls)} tools for {session_id}")
+                for i, tool_call in enumerate(tool_calls, 1):
+                    tool_name = tool_call.get("tool_name", "unknown")
+                    success = tool_call.get("success", False)
+                    status = "✅ Success" if success else "❌ Failed"
+                    args = tool_call.get("args", {})
+                    
+                    logger.info(f"🔧 [DEMO] Tool {i}/{len(tool_calls)}: {tool_name} - {status}")
+                    emit('tool_execution', {
+                        'tool_name': tool_name,
+                        'status': status,
+                        'args': args,
+                        'result': tool_call.get("result", ""),
+                        'error': tool_call.get("error", "")
+                    })
+            
+            # Emit capabilities demonstrated
+            if capabilities.get("descriptions"):
+                logger.info(f"✨ [DEMO] Capabilities: {capabilities['descriptions']}")
+                emit('capabilities', {'capabilities': capabilities['descriptions']})
+            
+            # Emit final response
             emit('assistant_message', {'message': response})
+            
         except Exception as e:
             logger.error(f"❌ [DEMO] Processing error: {e}")
             emit('error', {'message': f'❌ Processing error: {str(e)}'})
