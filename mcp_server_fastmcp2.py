@@ -363,23 +363,21 @@ class FastMCP2Server:
             param_names = list(input_schema.get('properties', {}).keys())
             required_params = input_schema.get('required', [])
             
-            # Create function signature with proper parameters
-            def create_dynamic_function():
-                # Build function parameters with defaults
-                param_signature = []
-                for param_name in param_names:
-                    if param_name in required_params:
-                        param_signature.append(f"{param_name}")
-                    else:
-                        param_signature.append(f"{param_name}=None")
-                
-                # Create function code
-                func_code = f"""
-async def api_tool_function({', '.join(param_signature)}) -> str:
+            # Create a proper closure that captures the necessary variables
+            # Build function signature with proper parameters
+            param_signature = []
+            for param_name in param_names:
+                if param_name in required_params:
+                    param_signature.append(f"{param_name}")
+                else:
+                    param_signature.append(f"{param_name}=None")
+            
+            # Create function code with proper signature
+            func_code = f"""async def api_tool_function({', '.join(param_signature)}) -> str:
     try:
         # Collect all non-None arguments
         arguments = {{}}
-        {chr(10).join([f'        if {param} is not None: arguments["{param}"] = {param}' for param in param_names])}
+{chr(10).join([f'        if {param} is not None: arguments["{param}"] = {param}' for param in param_names])}
         
         logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {{list(arguments.keys())}}")
         
@@ -411,11 +409,9 @@ async def api_tool_function({', '.join(param_signature)}) -> str:
         logger.error(f"Error executing tool {tool_name}: {{e}}", exc_info=True)
         return f"Error: {{str(e)}}"
 """
-                return func_code
             
             # Create the function dynamically
-            func_code = create_dynamic_function()
-            local_vars = {'self': self, 'logger': logger, 'json': json}
+            local_vars = {'self': self, 'logger': logger, 'json': json, 'tool_name': tool_name}
             exec(func_code, globals(), local_vars)
             return local_vars['api_tool_function']
         
