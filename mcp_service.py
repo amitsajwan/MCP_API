@@ -38,12 +38,11 @@ class ModernLLMService:
         self._tools = None
         self._initialized = False
     
-    def initialize(self):
-        """Initialize the MCP connection and load tools - synchronous version"""
+    async def initialize(self):
+        """Initialize the MCP connection and load tools - async version"""
         logger.info("🔄 [MCP_SERVICE] Starting initialization...")
         try:
-            # Use asyncio.run to handle the async initialization
-            result = asyncio.run(self._async_initialize())
+            result = await self._async_initialize()
             return result
         except Exception as e:
             logger.error(f"❌ [MCP_SERVICE] Failed to initialize Modern LLM Service: {e}")
@@ -121,8 +120,8 @@ class ModernLLMService:
             except Exception as e:
                 logger.error(f"Error during cleanup: {e}")
     
-    def process_message(self, user_message: str, conversation_history: List[Dict] = None) -> Dict[str, Any]:
-        """Process message with modern LLM tool capabilities - synchronous version"""
+    async def process_message(self, user_message: str, conversation_history: List[Dict] = None) -> Dict[str, Any]:
+        """Process message with modern LLM tool capabilities - async version"""
         logger.info(f"🔄 [MCP_SERVICE] Processing message: '{user_message[:100]}...'")
         
         if not self._initialized or not self._mcp_client or not self._azure_client or not self._tools:
@@ -130,8 +129,7 @@ class ModernLLMService:
             return {"error": "Service not initialized"}
         
         try:
-            # Use asyncio.run to handle the async processing
-            result = asyncio.run(self._async_process_message(user_message, conversation_history))
+            result = await self._async_process_message(user_message, conversation_history)
             return result
         except Exception as e:
             logger.error(f"❌ [MCP_SERVICE] Error processing message: {e}")

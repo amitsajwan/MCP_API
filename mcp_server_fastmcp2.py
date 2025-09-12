@@ -359,44 +359,65 @@ class FastMCP2Server:
             # Get the input schema to create proper function signature
             input_schema = self._build_input_schema_enhanced(operation, path, method, api_spec.spec)
             
-            # Create a function that accepts arguments as a single parameter
-            async def api_tool_function(arguments: Dict[str, Any] = None) -> str:
-                try:
-                    # Handle case where arguments might be None
-                    if arguments is None:
-                        arguments = {}
-                    
-                    logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {list(arguments.keys())}")
-                    
-                    # Get tool info from mapping
-                    tool_info = self.tool_name_mapping[tool_name]
-                    
-                    # Execute the tool
-                    result = self._execute_tool(
-                        tool_name, 
-                        tool_info['spec_name'], 
-                        tool_info['method'], 
-                        tool_info['path'], 
-                        tool_info['base_url'], 
-                        arguments
-                    )
-                    
-                    if result.get("status") == "success":
-                        response_text = json.dumps(result.get("data", result), indent=2)
-                        logger.info(f"Tool {tool_name} executed successfully")
-                        return response_text
-                    else:
-                        error_msg = f"Tool execution failed: {result.get('message', 'Unknown error')}"
-                        if result.get('status_code'):
-                            error_msg += f" (HTTP {result['status_code']})"
-                        logger.error(f"Tool {tool_name} failed: {error_msg}")
-                        return error_msg
-                        
-                except Exception as e:
-                    logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
-                    return f"Error: {str(e)}"
+            # Extract parameter names from schema for proper function signature
+            param_names = list(input_schema.get('properties', {}).keys())
+            required_params = input_schema.get('required', [])
             
-            return api_tool_function
+            # Create function signature with proper parameters
+            def create_dynamic_function():
+                # Build function parameters with defaults
+                param_signature = []
+                for param_name in param_names:
+                    if param_name in required_params:
+                        param_signature.append(f"{param_name}")
+                    else:
+                        param_signature.append(f"{param_name}=None")
+                
+                # Create function code
+                func_code = f"""
+async def api_tool_function({', '.join(param_signature)}) -> str:
+    try:
+        # Collect all non-None arguments
+        arguments = {{}}
+        {chr(10).join([f'        if {param} is not None: arguments["{param}"] = {param}' for param in param_names])}
+        
+        logger.info(f"Executing FastMCP 2.0 tool: {tool_name} with arguments: {{list(arguments.keys())}}")
+        
+        # Get tool info from mapping
+        tool_info = self.tool_name_mapping[tool_name]
+        
+        # Execute the tool
+        result = self._execute_tool(
+            tool_name, 
+            tool_info['spec_name'], 
+            tool_info['method'], 
+            tool_info['path'], 
+            tool_info['base_url'], 
+            arguments
+        )
+        
+        if result.get("status") == "success":
+            response_text = json.dumps(result.get("data", result), indent=2)
+            logger.info(f"Tool {tool_name} executed successfully")
+            return response_text
+        else:
+            error_msg = f"Tool execution failed: {{result.get('message', 'Unknown error')}}"
+            if result.get('status_code'):
+                error_msg += f" (HTTP {{result['status_code']}})"
+            logger.error(f"Tool {tool_name} failed: {{error_msg}}")
+            return error_msg
+            
+    except Exception as e:
+        logger.error(f"Error executing tool {tool_name}: {{e}}", exc_info=True)
+        return f"Error: {{str(e)}}"
+"""
+                return func_code
+            
+            # Create the function dynamically
+            func_code = create_dynamic_function()
+            local_vars = {'self': self, 'logger': logger, 'json': json}
+            exec(func_code, globals(), local_vars)
+            return local_vars['api_tool_function']
         
         # Create the tool function
         tool_func = create_tool_function(tool_name)
