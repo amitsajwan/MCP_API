@@ -1,299 +1,172 @@
 """
-Modern LLM Tool Capabilities Service - FIXED
-=============================================
-Core service demonstrating modern LLM tool usage:
-- Intelligent tool selection
-- Complex tool chaining
-- Adaptive tool usage
-- Error handling and retry logic
-- Reasoning about tool outputs
+MCP Client for Azure GPT-4o
+---------------------------
+- Discovers tools from any MCP server (stdio or HTTP transport)
+- Handles hundreds of dynamic tools from OpenAPI specs
+- Supports tool chaining: LLM can use multiple tools in sequence
+- Truncates / summarizes large payloads to avoid context overflow
 """
 
 import os
 import json
 import asyncio
 import logging
-from typing import Dict, Any, List, Optional
-from mcp_client import MCPClient, PythonStdioTransport, list_and_prepare_tools, create_azure_client, safe_truncate
+from typing import Dict, Any, List
 
-# Configure comprehensive logging for MCP service
+from fastmcp import Client as MCPClient
+from fastmcp.client import PythonStdioTransport
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from openai import AsyncAzureOpenAI
+
+
+# ---------- CONFIG ----------
+AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://your-resource.openai.azure.com/")
+AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o")  # your GPT-4o deployment name
+API_VERSION = "2024-02-01"
+MAX_TOKENS_TOOL_RESPONSE = 4000  # safeguard for huge payloads
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
+# Configure comprehensive logging for MCP client
 logging.basicConfig(
-    level=logging.INFO,
+    level=LOG_LEVEL,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('mcp_service.log', encoding='utf-8')
+        logging.FileHandler('mcp_client.log', encoding='utf-8')
     ]
 )
-logger = logging.getLogger(__name__)
 
-class ModernLLMService:
-    """Service demonstrating modern LLM tool capabilities"""
+
+# ---------- HELPERS ----------
+def count_tokens(text: str) -> int:
+    """Rough token counter."""
+    return len(text.split())
+
+def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
+    """Truncate huge tool responses."""
+    text = json.dumps(obj)
+    tokens = count_tokens(text)
+    if tokens <= max_tokens:
+        return obj
+    if isinstance(obj, list):
+        subset = obj[:100]
+    elif isinstance(obj, dict):
+        subset = dict(list(obj.items())[:50])
+    else:
+        subset = str(obj)[:5000]
+    return {
+        "note": f"Response truncated from {tokens} tokens for safety.",
+        "sample": subset
+    }
+
+
+async def create_azure_client() -> AsyncAzureOpenAI:
+    """Create Azure OpenAI client with Azure AD token provider."""
+    logging.info("🔄 [MCP_CLIENT] Creating Azure OpenAI client...")
+    credential = DefaultAzureCredential()
+    token_provider = get_bearer_token_provider(
+        credential, "https://cognitiveservices.azure.com/.default"
+    )
+    client = AsyncAzureOpenAI(
+        azure_endpoint=AZURE_ENDPOINT,
+        azure_ad_token_provider=token_provider,
+        api_version=API_VERSION
+    )
+    logging.info("✅ [MCP_CLIENT] Azure OpenAI client created")
+    return client
+
+
+async def list_and_prepare_tools(mcp: MCPClient) -> List[Dict[str, Any]]:
+    """Fetch available tools and convert them for Azure OpenAI."""
+    logging.info("🔄 [MCP_CLIENT] Fetching tools from MCP server...")
+    tools = await mcp.list_tools()
+    logging.info(f"🔄 [MCP_CLIENT] Received {len(tools)} tools from MCP server")
     
-    def __init__(self, mcp_server_cmd: str = "python mcp_server_fastmcp2.py --transport stdio"):
-        self.mcp_server_cmd = mcp_server_cmd
-        self._mcp_client = None
-        self._azure_client = None
-        self._tools = None
-        self._initialized = False
-    
-    async def initialize(self):
-        """Initialize the MCP connection and load tools - FIXED async version"""
-        logger.info("🔄 [MCP_SERVICE] Starting initialization...")
-        try:
-            logger.info("🔄 [MCP_SERVICE] Creating Azure client...")
-            self._azure_client = await create_azure_client()
-            logger.info("✅ [MCP_SERVICE] Azure client created")
-            
-            # Parse command: "python mcp_server_fastmcp2.py --transport stdio"
-            logger.info(f"🔄 [MCP_SERVICE] Parsing MCP server command: {self.mcp_server_cmd}")
-            cmd_parts = self.mcp_server_cmd.split()
-            script_path = cmd_parts[1]  # mcp_server_fastmcp2.py
-            args = cmd_parts[2:]  # ['--transport', 'stdio']
-            logger.info(f"🔄 [MCP_SERVICE] Script path: {script_path}, Args: {args}")
-            
-            logger.info("🔄 [MCP_SERVICE] Creating PythonStdioTransport...")
-            transport = PythonStdioTransport(script_path, args=args)
-            logger.info("✅ [MCP_SERVICE] Transport created")
-            
-            logger.info("🔄 [MCP_SERVICE] Creating MCP client...")
-            self._mcp_client = MCPClient(transport)
-            logger.info("✅ [MCP_SERVICE] MCP client created")
-            
-            logger.info("🔄 [MCP_SERVICE] Connecting to MCP server...")
-            await self._mcp_client.__aenter__()
-            logger.info("✅ [MCP_SERVICE] Connected to MCP server")
-            
-            logger.info("🔄 [MCP_SERVICE] Loading tools...")
-            self._tools = await list_and_prepare_tools(self._mcp_client)
-            logger.info(f"✅ [MCP_SERVICE] Loaded {len(self._tools)} tools")
-            
-            self._initialized = True
-            logger.info("✅ [MCP_SERVICE] Modern LLM Service initialized successfully")
-            return True
-                    
-        except Exception as e:
-            logger.error(f"❌ [MCP_SERVICE] Failed to initialize Modern LLM Service: {e}")
-            self._initialized = False
-            return False
-    
-    async def initialize_with_cmd(self, mcp_server_cmd):
-        """Initialize with a specific MCP server command"""
-        try:
-            self.mcp_server_cmd = mcp_server_cmd
-            self._azure_client = await create_azure_client()
-            # Parse command: "python mcp_server_fastmcp2.py --transport stdio"
-            cmd_parts = mcp_server_cmd.split()
-            script_path = cmd_parts[1]  # mcp_server_fastmcp2.py
-            args = cmd_parts[2:]  # ['--transport', 'stdio']
-            transport = PythonStdioTransport(script_path, args=args)
-            self._mcp_client = MCPClient(transport)
-            await self._mcp_client.__aenter__()
-            self._tools = await list_and_prepare_tools(self._mcp_client)
-            
-            self._initialized = True
-            logger.info("✅ Modern LLM Service reinitialized with new credentials")
-            return True
-        except Exception as e:
-            logger.error(f"❌ Failed to reinitialize Modern LLM Service: {e}")
-            self._initialized = False
-            return False
-    
-    async def cleanup(self):
-        """Clean up MCP connection"""
-        if self._mcp_client:
-            try:
-                await self._mcp_client.__aexit__(None, None, None)
-                self._mcp_client = None
-                self._initialized = False
-            except Exception as e:
-                logger.error(f"Error during cleanup: {e}")
-    
-    async def process_message(self, user_message: str, conversation_history: List[Dict] = None) -> Dict[str, Any]:
-        """Process message with modern LLM tool capabilities - FIXED async version"""
-        logger.info(f"🔄 [MCP_SERVICE] Processing message: '{user_message[:100]}...'")
-        
-        if not self._initialized or not self._mcp_client or not self._azure_client or not self._tools:
-            logger.error("❌ [MCP_SERVICE] Service not initialized")
-            return {"error": "Service not initialized"}
-        
-        try:
-            # Build conversation context with modern LLM capabilities
-            logger.info("🔄 [MCP_SERVICE] Building conversation context...")
-            messages = [
-                {"role": "system", "content": (
-                    "You are an intelligent assistant with access to powerful tools. "
-                    "You can intelligently select which tools to use, chain them in complex sequences, "
-                    "adapt your approach based on results, handle errors gracefully, and reason about outputs. "
-                    "Use tools when helpful and provide comprehensive responses."
-                )}
-            ]
-            
-            if conversation_history:
-                logger.info(f"🔄 [MCP_SERVICE] Adding {len(conversation_history)} conversation history messages")
-                messages.extend(conversation_history)
-            
-            messages.append({"role": "user", "content": user_message})
-            logger.info(f"🔄 [MCP_SERVICE] Total messages: {len(messages)}")
-            
-            # Process with modern LLM tool calling
-            logger.info("🔄 [MCP_SERVICE] Calling Azure OpenAI...")
-            response = await self._azure_client.chat.completions.create(
-                model=os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o"),
+    formatted = []
+    for i, tool in enumerate(tools, 1):
+        logging.info(f"🔧 [MCP_CLIENT] Processing tool {i}/{len(tools)}: {tool.name}")
+        formatted.append({
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description or "",
+                "parameters": tool.inputSchema or {"type": "object", "properties": {}}
+            }
+        })
+    logging.info(f"✅ [MCP_CLIENT] Loaded {len(formatted)} tools from MCP server")
+    return formatted
+
+
+async def run_chat(mcp_cmd: str, user_query: str):
+    """Main chat loop with tool calling support."""
+    # --- Connect to MCP server ---
+    cmd_parts = mcp_cmd.split()
+    script_path = cmd_parts[1]  # mcp_server_fastmcp2.py
+    args = cmd_parts[2:]  # ['--transport', 'stdio']
+    transport = PythonStdioTransport(script_path, args=args)
+    async with MCPClient(transport) as mcp:
+        tools = await list_and_prepare_tools(mcp)
+        azure_client = await create_azure_client()
+
+        # Conversation state for multi-step tool chaining
+        messages = [
+            {"role": "system", "content": (
+                "You are an intelligent assistant. "
+                "Use the available tools when helpful. "
+                "If a tool may return thousands of records, first refine the query. "
+                "Truncate or summarize results if they are huge."
+            )},
+            {"role": "user", "content": user_query}
+        ]
+
+        while True:
+            # Call LLM
+            response = await azure_client.chat.completions.create(
+                model=AZURE_DEPLOYMENT,
                 messages=messages,
-                tools=self._tools,
+                tools=tools,
                 tool_choice="auto"
             )
-            logger.info("✅ [MCP_SERVICE] Azure OpenAI response received")
-            
+
             choice = response.choices[0]
-            tool_calls = []
-        
             if choice.finish_reason == "tool_calls":
-                logger.info(f"🔄 [MCP_SERVICE] LLM requested {len(choice.message.tool_calls)} tool calls")
-                # Handle tool calls with modern capabilities
-                for i, tool_call in enumerate(choice.message.tool_calls, 1):
+                for tool_call in choice.message.tool_calls:
                     tool_name = tool_call.function.name
                     args = json.loads(tool_call.function.arguments or "{}")
-                    
-                    logger.info(f"🔧 [MCP_SERVICE] Executing tool {i}/{len(choice.message.tool_calls)}: {tool_name}")
-                    logger.info(f"🔧 [MCP_SERVICE] Tool args: {args}")
-                    
+                    logging.info(f"🔧 LLM requested tool: {tool_name} with {args}")
+
                     try:
-                        logger.info(f"🔄 [MCP_SERVICE] Calling MCP tool: {tool_name}")
-                        raw_result = await self._mcp_client.call_tool(tool_name, args)
-                        logger.info(f"✅ [MCP_SERVICE] Tool {tool_name} completed successfully")
-                        
-                        # FIXED: Handle different response formats properly
-                        processed_result = self._normalize_tool_result(raw_result)
-                        result = safe_truncate(processed_result)
-                        logger.info(f"🔄 [MCP_SERVICE] Tool result processed: {len(str(result))} chars")
-                        
-                        tool_calls.append({
-                            "tool_call_id": tool_call.id,
-                            "tool_name": tool_name,
-                            "args": args,
-                            "result": result,
-                            "success": True
-                        })
-                        
+                        raw_result = await mcp.call_tool(tool_name, args)
+                        result = safe_truncate(raw_result)
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
                             "content": json.dumps(result)
                         })
-                    
                     except Exception as e:
-                        logger.error(f"❌ [MCP_SERVICE] Tool call failed: {tool_name} - {e}")
-                        tool_calls.append({
-                            "tool_call_id": tool_call.id,
-                            "tool_name": tool_name,
-                            "args": args,
-                            "error": str(e),
-                            "success": False
-                        })
-                        
+                        logging.error(f"❌ Tool call failed: {e}")
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
                             "content": f"Error: {e}"
                         })
-                
-                # Continue conversation to get final response
-                logger.info("🔄 [MCP_SERVICE] Getting final response from LLM...")
-                response = await self._azure_client.chat.completions.create(
-                    model=os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o"),
-                    messages=messages,
-                    tools=self._tools,
-                    tool_choice="auto"
-                )
-                logger.info("✅ [MCP_SERVICE] Final response received")
-                
-                choice = response.choices[0]
-            else:
-                logger.info("ℹ️ [MCP_SERVICE] No tool calls requested by LLM")
-            
-            # Analyze capabilities demonstrated
-            logger.info("🔄 [MCP_SERVICE] Analyzing capabilities...")
-            capabilities = self._analyze_capabilities(tool_calls, user_message)
-            logger.info(f"✨ [MCP_SERVICE] Capabilities: {capabilities.get('descriptions', [])}")
-            
-            result = {
-                "success": True,
-                "response": choice.message.content or "",
-                "tool_calls": tool_calls,
-                "conversation": messages[1:],
-                "capabilities": capabilities
-            }
-            
-            logger.info(f"✅ [MCP_SERVICE] Message processing completed successfully")
-            return result
-                    
-        except Exception as e:
-            logger.error(f"❌ [MCP_SERVICE] Error processing message: {e}")
-            return {"error": str(e)}
-    
-    def _normalize_tool_result(self, raw_result: Any) -> Any:
-        """FIXED: Normalize tool results to handle different response formats"""
-        try:
-            # If it's already a dict, return as-is
-            if isinstance(raw_result, dict):
-                return raw_result
-            
-            # If it's a list, wrap it in a dict
-            if isinstance(raw_result, list):
-                return {"data": raw_result, "type": "list", "count": len(raw_result)}
-            
-            # If it's a string that looks like JSON, try to parse it
-            if isinstance(raw_result, str):
-                try:
-                    parsed = json.loads(raw_result)
-                    return self._normalize_tool_result(parsed)  # Recursively normalize
-                except json.JSONDecodeError:
-                    # If it's not JSON, return as a string response
-                    return {"data": raw_result, "type": "string"}
-            
-            # For other types, convert to string and wrap
-            return {"data": str(raw_result), "type": type(raw_result).__name__}
-            
-        except Exception as e:
-            logger.error(f"❌ [MCP_SERVICE] Error normalizing tool result: {e}")
-            return {"error": f"Failed to normalize result: {str(e)}", "raw_result": str(raw_result)}
-    
-    def _analyze_capabilities(self, tool_calls: List[Dict], user_message: str) -> Dict[str, Any]:
-        """Analyze which modern LLM capabilities were demonstrated"""
-        capabilities = {
-            "intelligent_selection": len(tool_calls) > 0,
-            "tool_chaining": len(tool_calls) > 1,
-            "error_handling": any(tc.get('error') for tc in tool_calls),
-            "adaptive_usage": len(tool_calls) > 0 and not any(tc.get('error') for tc in tool_calls),
-            "reasoning": len(tool_calls) > 0
-        }
-        
-        # Add capability descriptions
-        capability_descriptions = []
-        if capabilities["intelligent_selection"]:
-            capability_descriptions.append("🧠 Intelligent Tool Selection")
-        if capabilities["tool_chaining"]:
-            capability_descriptions.append("🔗 Complex Tool Chaining")
-        if capabilities["error_handling"]:
-            capability_descriptions.append("🛡️ Error Handling & Retry")
-        if capabilities["adaptive_usage"]:
-            capability_descriptions.append("🔄 Adaptive Tool Usage")
-        if capabilities["reasoning"]:
-            capability_descriptions.append("🧩 Reasoning About Outputs")
-        
-        capabilities["descriptions"] = capability_descriptions
-        capabilities["tool_count"] = len(tool_calls)
-        capabilities["success_rate"] = len([tc for tc in tool_calls if tc.get('success', False)]) / max(len(tool_calls), 1)
-        
-        return capabilities
-    
-    async def get_available_tools(self) -> List[Dict[str, Any]]:
-        """Get list of available tools"""
-        if not self._initialized or not self._tools:
-            return []
-        return self._tools
+                continue  # Loop to let LLM decide next step
 
-# Global service instance
-mcp_service = ModernLLMService()
+            # Final response
+            content = choice.message.content or ""
+            print(f"\n🤖 Assistant: {content}\n")
+            break
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="MCP Client with Azure GPT-4o")
+    parser.add_argument("query", help="User query")
+    parser.add_argument(
+        "--server",
+        default="python mcp_server_fastmcp2.py --transport stdio",
+        help="Command to start MCP server (default: stdio)"
+    )
+    args = parser.parse_args()
+
+    asyncio.run(run_chat(args.server, args.query))
