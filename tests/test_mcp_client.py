@@ -66,6 +66,82 @@ class TestMCPClient(unittest.TestCase):
         self.assertNotEqual(result, large_obj)
         self.assertIn("truncated", str(result).lower())
     
+    def test_safe_truncate_calltoolresult(self):
+        """Test safe_truncate with CallToolResult-like object"""
+        # Create a mock CallToolResult-like object
+        class MockContentItem:
+            def __init__(self, text):
+                self.text = text
+        
+        class MockCallToolResult:
+            def __init__(self, isError, content_items):
+                self.isError = isError
+                self.content = content_items
+        
+        # Test with small result
+        small_result = MockCallToolResult(
+            isError=False,
+            content=[MockContentItem("Success message")]
+        )
+        result = safe_truncate(small_result)
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result["isError"], False)
+        self.assertEqual(len(result["content"]), 1)
+        self.assertEqual(result["content"][0]["text"], "Success message")
+        
+        # Test with large result
+        large_content = [MockContentItem("x" * 10000) for _ in range(10)]
+        large_result = MockCallToolResult(
+            isError=False,
+            content=large_content
+        )
+        result = safe_truncate(large_result, max_tokens=10)
+        self.assertIsInstance(result, dict)
+        self.assertIn("note", result)
+        self.assertIn("truncated", result["note"].lower())
+    
+    def test_safe_truncate_json_serializable(self):
+        """Test that safe_truncate always returns JSON serializable results"""
+        import json
+        
+        # Test with various non-serializable objects
+        class NonSerializableClass:
+            def __init__(self, data):
+                self.data = data
+        
+        non_serializable = NonSerializableClass("test data")
+        result = safe_truncate(non_serializable)
+        
+        # Should be JSON serializable
+        json_str = json.dumps(result)
+        self.assertIsInstance(json_str, str)
+        
+        # Should contain the data in a serializable format
+        self.assertIn("data", result)
+        self.assertIn("type", result)
+        self.assertEqual(result["data"], "test data")
+        self.assertEqual(result["type"], "NonSerializableClass")
+    
+    def test_safe_truncate_preserves_structure(self):
+        """Test that safe_truncate preserves JSON structure when truncating"""
+        # Test with large list
+        large_list = list(range(200))  # 200 items
+        result = safe_truncate(large_list, max_tokens=10)
+        
+        self.assertIsInstance(result, dict)
+        self.assertIn("note", result)
+        self.assertIn("truncated_items", result)
+        self.assertEqual(len(result["truncated_items"]), 100)  # Should be truncated to 100
+        
+        # Test with large dict
+        large_dict = {f"key_{i}": f"value_{i}" for i in range(100)}  # 100 key-value pairs
+        result = safe_truncate(large_dict, max_tokens=10)
+        
+        self.assertIsInstance(result, dict)
+        self.assertIn("note", result)
+        self.assertIn("truncated_data", result)
+        self.assertEqual(len(result["truncated_data"]), 50)  # Should be truncated to 50
+    
     @patch('mcp_client.AsyncAzureOpenAI')
     @patch('mcp_client.get_bearer_token_provider')
     def test_create_azure_client(self, mock_token_provider, mock_azure_client):
