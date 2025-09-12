@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-MCP Bot Web Interface
-====================
+MCP Bot Web Interface - FIXED
+==============================
 Personal API assistant with 51 tools
 Clean, simple, and reliable
 """
@@ -10,6 +10,7 @@ import os
 import json
 import asyncio
 import logging
+import threading
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from mcp_service import ModernLLMService
@@ -27,9 +28,42 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'mcp-bot-secret-2024'
-socketio = SocketIO(app, cors_allowed_origins="*")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-# Simple class to hold MCP service state (no global variables)
+# FIXED: Proper async event loop management
+class AsyncEventLoop:
+    def __init__(self):
+        self.loop = None
+        self.thread = None
+        self._start_loop()
+    
+    def _start_loop(self):
+        """Start the async event loop in a separate thread"""
+        def run_loop():
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
+            self.loop.run_forever()
+        
+        self.thread = threading.Thread(target=run_loop, daemon=True)
+        self.thread.start()
+        
+        # Wait for loop to be ready
+        import time
+        while self.loop is None:
+            time.sleep(0.01)
+    
+    def run_async(self, coro):
+        """Run an async coroutine in the event loop"""
+        if self.loop is None:
+            raise RuntimeError("Event loop not initialized")
+        
+        future = asyncio.run_coroutine_threadsafe(coro, self.loop)
+        return future.result(timeout=30)  # 30 second timeout
+
+# Global async event loop
+async_loop = AsyncEventLoop()
+
+# Simple class to hold MCP service state
 class MCPDemoService:
     def __init__(self):
         self.service = None
@@ -64,7 +98,7 @@ class MCPDemoService:
             return {
                 "response": "❌ MCP service not initialized. Please refresh the page.",
                 "tool_calls": [],
-                "capabilities": []
+                "capabilities": {"descriptions": []}
             }
         
         try:
@@ -72,10 +106,11 @@ class MCPDemoService:
             self.conversation.append({"role": "user", "content": message})
             
             # Process with MCP service
-            result = await self.service.process_message(message, self.conversation)
+            result = await self.service.process_message(message, self.conversation[-10:])  # Keep last 10 messages
             
             # Add assistant response to conversation
-            self.conversation.append({"role": "assistant", "content": result.get("response", "")})
+            if result.get("response"):
+                self.conversation.append({"role": "assistant", "content": result.get("response", "")})
             
             return result
             
@@ -84,10 +119,21 @@ class MCPDemoService:
             return {
                 "response": f"❌ Error processing message: {str(e)}",
                 "tool_calls": [],
-                "capabilities": []
+                "capabilities": {"descriptions": []}
             }
+    
+    async def get_tools(self):
+        """Get available tools"""
+        if not self.initialized or not self.service:
+            return []
+        
+        try:
+            return await self.service.get_available_tools()
+        except Exception as e:
+            logger.error(f"❌ [DEMO] Error getting tools: {e}")
+            return []
 
-# Create single instance (no global variables)
+# Create single instance
 demo_service = MCPDemoService()
 
 @app.route('/')
@@ -106,22 +152,16 @@ def handle_connect():
         logger.info("🔄 [DEMO] Starting MCP service initialization...")
         emit('system_message', {'message': '🔄 Initializing MCP service...'})
         
-        # Run async initialization in the event loop
         try:
-            # Check if there's already an event loop running
-            try:
-                loop = asyncio.get_running_loop()
-                # If we're in an async context, we need to schedule the coroutine
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, demo_service.initialize())
-                    result = future.result()
-            except RuntimeError:
-                # No event loop running, safe to create one
-                result = asyncio.run(demo_service.initialize())
+            # FIXED: Proper async handling
+            result = async_loop.run_async(demo_service.initialize())
             
             if result:
                 emit('system_message', {'message': '✅ MCP Service initialized - I can now understand and execute tools!'})
+                
+                # Load and send tools list
+                tools = async_loop.run_async(demo_service.get_tools())
+                emit('tools_list', {'tools': tools})
             else:
                 emit('error', {'message': '❌ MCP Service initialization failed'})
         except Exception as e:
@@ -150,58 +190,44 @@ def handle_message(data):
     
     # Process with MCP service
     try:
-        # Run async processing in the event loop
-        try:
-            # Check if there's already an event loop running
-            try:
-                loop = asyncio.get_running_loop()
-                # If we're in an async context, we need to schedule the coroutine
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, demo_service.process_message(message))
-                    result = future.result()
-            except RuntimeError:
-                # No event loop running, safe to create one
-                result = asyncio.run(demo_service.process_message(message))
-            
-            # Extract components from result
-            response = result.get("response", "")
-            tool_calls = result.get("tool_calls", [])
-            capabilities = result.get("capabilities", {})
-            
-            # Emit tool execution details
-            if tool_calls:
-                logger.info(f"🔧 [DEMO] Executed {len(tool_calls)} tools for {session_id}")
-                for i, tool_call in enumerate(tool_calls, 1):
-                    tool_name = tool_call.get("tool_name", "unknown")
-                    success = tool_call.get("success", False)
-                    status = "✅ Success" if success else "❌ Failed"
-                    args = tool_call.get("args", {})
-                    
-                    logger.info(f"🔧 [DEMO] Tool {i}/{len(tool_calls)}: {tool_name} - {status}")
-                    emit('tool_execution', {
-                        'tool_name': tool_name,
-                        'status': status,
-                        'args': args,
-                        'result': tool_call.get("result", ""),
-                        'error': tool_call.get("error", "")
-                    })
-            
-            # Emit capabilities demonstrated
-            if capabilities.get("descriptions"):
-                logger.info(f"✨ [DEMO] Capabilities: {capabilities['descriptions']}")
-                emit('capabilities', {'capabilities': capabilities['descriptions']})
-            
-            # Emit final response
-            emit('assistant_message', {'message': response})
-            
-        except Exception as e:
-            logger.error(f"❌ [DEMO] Processing error: {e}")
-            emit('error', {'message': f'❌ Processing error: {str(e)}'})
-            
+        # FIXED: Proper async handling
+        result = async_loop.run_async(demo_service.process_message(message))
+        
+        # Extract components from result
+        response = result.get("response", "")
+        tool_calls = result.get("tool_calls", [])
+        capabilities = result.get("capabilities", {})
+        
+        # Emit tool execution details
+        if tool_calls:
+            logger.info(f"🔧 [DEMO] Executed {len(tool_calls)} tools for {session_id}")
+            for i, tool_call in enumerate(tool_calls, 1):
+                tool_name = tool_call.get("tool_name", "unknown")
+                success = tool_call.get("success", False)
+                status = "✅ Success" if success else "❌ Failed"
+                args = tool_call.get("args", {})
+                error = tool_call.get("error", "")
+                
+                logger.info(f"🔧 [DEMO] Tool {i}/{len(tool_calls)}: {tool_name} - {status}")
+                emit('tool_execution', {
+                    'tool_name': tool_name,
+                    'status': status,
+                    'args': args,
+                    'result': tool_call.get("result", ""),
+                    'error': error
+                })
+        
+        # Emit capabilities demonstrated
+        if capabilities.get("descriptions"):
+            logger.info(f"✨ [DEMO] Capabilities: {capabilities['descriptions']}")
+            emit('capabilities', {'capabilities': capabilities['descriptions']})
+        
+        # Emit final response
+        emit('assistant_message', {'message': response})
+        
     except Exception as e:
-        logger.error(f"❌ [DEMO] Error handling message: {e}")
-        emit('error', {'message': f'❌ Error: {str(e)}'})
+        logger.error(f"❌ [DEMO] Processing error: {e}")
+        emit('error', {'message': f'❌ Processing error: {str(e)}'})
 
 @socketio.on('set_credentials')
 def handle_set_credentials(data):
@@ -211,12 +237,21 @@ def handle_set_credentials(data):
     
     try:
         # Set environment variables
-        for key, value in data.items():
-            if value:
-                os.environ[key] = value
-                logger.info(f"🔐 [DEMO] Set {key}")
+        env_mapping = {
+            'username': 'API_USERNAME',
+            'password': 'API_PASSWORD',
+            'api_key_name': 'API_KEY_NAME',
+            'api_key_value': 'API_KEY_VALUE',
+            'login_url': 'LOGIN_URL',
+            'base_url': 'FORCE_BASE_URL'
+        }
         
-        emit('credentials_set', {'message': '✅ Credentials set successfully'})
+        for key, value in data.items():
+            if value and key in env_mapping:
+                os.environ[env_mapping[key]] = value
+                logger.info(f"🔐 [DEMO] Set {env_mapping[key]}")
+        
+        emit('system_message', {'message': '✅ Credentials set successfully'})
         
     except Exception as e:
         logger.error(f"❌ [DEMO] Error setting credentials: {e}")
@@ -229,7 +264,21 @@ def handle_clear_conversation():
     logger.info(f"🗑️ [DEMO] Clearing conversation for {session_id}")
     
     demo_service.conversation = []
-    emit('conversation_cleared', {'message': '✅ Conversation cleared'})
+    emit('system_message', {'message': '✅ Conversation cleared'})
+
+@socketio.on('get_tools')
+def handle_get_tools():
+    """Get available tools"""
+    session_id = request.sid
+    logger.info(f"🔧 [DEMO] Getting tools for {session_id}")
+    
+    try:
+        tools = async_loop.run_async(demo_service.get_tools())
+        emit('tools_list', {'tools': tools})
+        logger.info(f"✅ [DEMO] Sent {len(tools)} tools to {session_id}")
+    except Exception as e:
+        logger.error(f"❌ [DEMO] Error getting tools: {e}")
+        emit('error', {'message': f'❌ Error getting tools: {str(e)}'})
 
 if __name__ == '__main__':
     print("🤖 Starting MCP Bot...")
@@ -243,3 +292,7 @@ if __name__ == '__main__':
         print("\n👋 Shutting down MCP Bot...")
     except Exception as e:
         print(f"❌ Error starting MCP Bot: {e}")
+    finally:
+        # Cleanup async loop
+        if async_loop.loop:
+            async_loop.loop.call_soon_threadsafe(async_loop.loop.stop)
