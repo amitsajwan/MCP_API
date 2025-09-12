@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-MCP Bot Web Interface - FIXED
-==============================
-Personal API assistant with 51 tools
-Clean, simple, and reliable
+MCP Service - Modern LLM Service Implementation
+==============================================
+Handles MCP tool calls and Azure OpenAI integration
 """
 
 import os
 import json
 import asyncio
 import logging
-import threading
-from flask import Flask, render_template, request
-from flask_socketio import SocketIO, emit
-from mcp_service import ModernLLMService
+from typing import Dict, List, Any, Optional
+from openai import AsyncAzureOpenAI
+from mcp_client import MCPClient, PythonStdioTransport
 
 # Configure logging
 logging.basicConfig(
@@ -21,278 +19,252 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('web_ui.log', encoding='utf-8')
+        logging.FileHandler('mcp_service.log', encoding='utf-8')
     ]
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("mcp_service")
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'mcp-bot-secret-2024'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
-
-# FIXED: Proper async event loop management
-class AsyncEventLoop:
+class ModernLLMService:
+    """Modern LLM Service that handles MCP tool calls and Azure OpenAI integration."""
+    
     def __init__(self):
-        self.loop = None
-        self.thread = None
-        self._start_loop()
-    
-    def _start_loop(self):
-        """Start the async event loop in a separate thread"""
-        def run_loop():
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-            self.loop.run_forever()
+        self._initialized = False
+        self._mcp_client = None
+        self._azure_client = None
+        self._tools = []
         
-        self.thread = threading.Thread(target=run_loop, daemon=True)
-        self.thread.start()
-        
-        # Wait for loop to be ready
-        import time
-        while self.loop is None:
-            time.sleep(0.01)
-    
-    def run_async(self, coro):
-        """Run an async coroutine in the event loop"""
-        if self.loop is None:
-            raise RuntimeError("Event loop not initialized")
-        
-        future = asyncio.run_coroutine_threadsafe(coro, self.loop)
-        return future.result(timeout=30)  # 30 second timeout
-
-# Global async event loop
-async_loop = AsyncEventLoop()
-
-# Simple class to hold MCP service state
-class MCPDemoService:
-    def __init__(self):
-        self.service = None
-        self.initialized = False
-        self.conversation = []
-    
-    async def initialize(self):
-        """Initialize MCP service once"""
-        if self.initialized:
+    async def initialize(self) -> bool:
+        """Initialize the MCP service and Azure OpenAI client."""
+        try:
+            logger.info("[MCP_SERVICE] Initializing MCP service...")
+            
+            # Initialize Azure OpenAI client
+            self._azure_client = AsyncAzureOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
+            )
+            
+            # Initialize MCP client
+            self._mcp_client = MCPClient(PythonStdioTransport())
+            await self._mcp_client.connect()
+            
+            # Get available tools
+            self._tools = await self._mcp_client.list_tools()
+            
+            self._initialized = True
+            logger.info(f"[MCP_SERVICE] MCP service initialized with {len(self._tools)} tools")
             return True
             
-        try:
-            logger.info("🔄 [DEMO] Initializing MCP service...")
-            self.service = ModernLLMService()
-            result = await self.service.initialize()
-            self.initialized = result
-            
-            if result:
-                logger.info("✅ [DEMO] MCP Service initialized successfully")
-                return True
-            else:
-                logger.error("❌ [DEMO] MCP Service initialization failed")
-                return False
-                
         except Exception as e:
-            logger.error(f"❌ [DEMO] Error initializing MCP service: {e}")
+            logger.error(f"[MCP_SERVICE] Failed to initialize MCP service: {e}")
             return False
     
-    async def process_message(self, message):
-        """Process user message with MCP service"""
-        if not self.initialized or not self.service:
+    async def process_message(self, user_message: str, conversation_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Process a user message and return response with tool calls."""
+        if not self._initialized:
             return {
-                "response": "❌ MCP service not initialized. Please refresh the page.",
+                "response": "❌ MCP service not initialized",
                 "tool_calls": [],
                 "capabilities": {"descriptions": []}
             }
         
         try:
-            # Add user message to conversation
-            self.conversation.append({"role": "user", "content": message})
+            logger.info(f"[MCP_SERVICE] Processing message: '{user_message[:100]}...'")
             
-            # Process with MCP service
-            result = await self.service.process_message(message, self.conversation[-10:])  # Keep last 10 messages
+            # Build conversation context
+            messages = self._build_conversation_context(user_message, conversation_history or [])
             
-            # Add assistant response to conversation
-            if result.get("response"):
-                self.conversation.append({"role": "assistant", "content": result.get("response", "")})
+            # Call Azure OpenAI
+            logger.info("[MCP_SERVICE] Calling Azure Openai...")
+            response = await self._azure_client.chat.completions.create(
+                model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
+                messages=messages,
+                tools=self._tools,
+                tool_choice="auto",
+                temperature=0.1
+            )
             
-            return result
+            logger.info("[MCP_SERVICE] Azure Openai response received")
+            
+            # Process response
+            message = response.choices[0].message
+            tool_calls = []
+            
+            if message.tool_calls:
+                logger.info(f"[MCP_SERVICE] LLM requested {len(message.tool_calls)} tool calls")
+                
+                # Execute tool calls
+                for i, tool_call in enumerate(message.tool_calls, 1):
+                    tool_name = tool_call.function.name
+                    tool_args = json.loads(tool_call.function.arguments)
+                    tool_call_id = tool_call.id
+                    
+                    logger.info(f"[MCP_SERVICE] Executing tool {i}/{len(message.tool_calls)}: {tool_name}")
+                    logger.info(f"[MCP_SERVICE] Tool args: {tool_args}")
+                    
+                    try:
+                        # Call MCP tool
+                        result = await self._mcp_client.call_tool(tool_name, tool_args)
+                        
+                        tool_calls.append({
+                            "tool_name": tool_name,
+                            "args": tool_args,
+                            "success": True,
+                            "result": result,
+                            "tool_call_id": tool_call_id
+                        })
+                        
+                        logger.info(f"[MCP_SERVICE] Tool {tool_name} completed successfully")
+                        
+                    except Exception as e:
+                        error_msg = str(e)
+                        logger.error(f"[MCP_SERVICE] Tool call failed: {tool_name} - {error_msg}")
+                        
+                        # Provide more helpful error messages for common issues
+                        if "unexpected_keyword_argument" in error_msg:
+                            error_msg = f"Invalid parameter: {error_msg}. Please check the tool documentation for correct parameters."
+                        elif "validation error" in error_msg:
+                            error_msg = f"Parameter validation failed: {error_msg}. Please check parameter types and values."
+                        elif "not found" in error_msg.lower():
+                            error_msg = f"Tool not found: {tool_name}. This tool may not be available."
+                        
+                        tool_calls.append({
+                            "tool_name": tool_name,
+                            "args": tool_args,
+                            "success": False,
+                            "error": error_msg,
+                            "tool_call_id": tool_call_id
+                        })
+                
+                # Get final response from LLM with tool results
+                logger.info("[MCP_SERVICE] Getting final response from LLM...")
+                final_messages = messages + [message] + self._build_tool_messages(tool_calls)
+                
+                try:
+                    final_response = await self._azure_client.chat.completions.create(
+                        model=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
+                        messages=final_messages,
+                        temperature=0.1
+                    )
+                except Exception as e:
+                    logger.error(f"[MCP_SERVICE] Error getting final response: {e}")
+                    # If the final response fails, return the tool results directly
+                    response_text = f"I executed {len(tool_calls)} tools. Here are the results:\n\n"
+                    for tool_call in tool_calls:
+                        if tool_call["success"]:
+                            response_text += f"✅ {tool_call['tool_name']}: {json.dumps(tool_call['result'], indent=2)}\n\n"
+                        else:
+                            response_text += f"❌ {tool_call['tool_name']}: {tool_call['error']}\n\n"
+                    return {
+                        "response": response_text,
+                        "tool_calls": tool_calls,
+                        "capabilities": self._analyze_capabilities(tool_calls, user_message)
+                    }
+                
+                response_text = final_response.choices[0].message.content
+            else:
+                response_text = message.content or "I don't have a response for that."
+            
+            # Analyze capabilities
+            capabilities = self._analyze_capabilities(tool_calls, user_message)
+            
+            logger.info(f"[MCP_SERVICE] Getting final response: {len(response_text)} chars")
+            
+            return {
+                "response": response_text,
+                "tool_calls": tool_calls,
+                "capabilities": capabilities
+            }
             
         except Exception as e:
-            logger.error(f"❌ [DEMO] Error processing message: {e}")
+            logger.error(f"[MCP_SERVICE] Error processing message: {e}")
             return {
                 "response": f"❌ Error processing message: {str(e)}",
                 "tool_calls": [],
                 "capabilities": {"descriptions": []}
             }
     
-    async def get_tools(self):
-        """Get available tools"""
-        if not self.initialized or not self.service:
-            return []
+    def _build_conversation_context(self, user_message: str, conversation_history: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """Build conversation context for Azure OpenAI."""
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful financial API assistant. You can help users with payments, settlements, trading, and mailbox operations. Use the available tools to provide accurate information and perform actions."
+            }
+        ]
         
-        try:
-            return await self.service.get_available_tools()
-        except Exception as e:
-            logger.error(f"❌ [DEMO] Error getting tools: {e}")
-            return []
-
-# Create single instance
-demo_service = MCPDemoService()
-
-@app.route('/')
-def index():
-    """Main chat interface"""
-    return render_template('chat_ws.html')
-
-@socketio.on('connect')
-def handle_connect():
-    """Handle client connection"""
-    session_id = request.sid
-    logger.info(f"🔌 [DEMO] Client connected: {session_id}")
-    
-    # Initialize MCP service on first connection
-    if not demo_service.initialized:
-        logger.info("🔄 [DEMO] Starting MCP service initialization...")
-        emit('system_message', {'message': '🔄 Initializing MCP service...'})
-        
-        try:
-            # FIXED: Proper async handling
-            result = async_loop.run_async(demo_service.initialize())
-            
-            if result:
-                emit('system_message', {'message': '✅ MCP Service initialized - I can now understand and execute tools!'})
-                
-                # Load and send tools list
-                tools = async_loop.run_async(demo_service.get_tools())
-                emit('tools_list', {'tools': tools})
-            else:
-                emit('error', {'message': '❌ MCP Service initialization failed'})
-        except Exception as e:
-            logger.error(f"❌ [DEMO] Initialization error: {e}")
-            emit('error', {'message': f'❌ Initialization error: {str(e)}'})
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    """Handle client disconnection"""
-    session_id = request.sid
-    logger.info(f"🔌 [DEMO] Client disconnected: {session_id}")
-
-@socketio.on('message')
-def handle_message(data):
-    """Handle incoming messages"""
-    session_id = request.sid
-    message = data.get('message', '').strip()
-    
-    if not message:
-        return
-    
-    logger.info(f"💬 [DEMO] Received message from {session_id}: '{message}'")
-    
-    # Emit user message
-    emit('user_message', {'message': message})
-    
-    # Process with MCP service
-    try:
-        # FIXED: Proper async handling
-        result = async_loop.run_async(demo_service.process_message(message))
-        
-        # Extract components from result
-        response = result.get("response", "")
-        tool_calls = result.get("tool_calls", [])
-        capabilities = result.get("capabilities", {})
-        
-        # Emit tool execution details
-        if tool_calls:
-            logger.info(f"🔧 [DEMO] Executed {len(tool_calls)} tools for {session_id}")
-            for i, tool_call in enumerate(tool_calls, 1):
-                tool_name = tool_call.get("tool_name", "unknown")
-                success = tool_call.get("success", False)
-                status = "✅ Success" if success else "❌ Failed"
-                args = tool_call.get("args", {})
-                error = tool_call.get("error", "")
-                
-                logger.info(f"🔧 [DEMO] Tool {i}/{len(tool_calls)}: {tool_name} - {status}")
-                emit('tool_execution', {
-                    'tool_name': tool_name,
-                    'status': status,
-                    'args': args,
-                    'result': tool_call.get("result", ""),
-                    'error': error
+        # Add conversation history
+        for msg in conversation_history[-10:]:  # Keep last 10 messages
+            if msg.get("role") in ["user", "assistant"]:
+                messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
                 })
         
-        # Emit capabilities demonstrated
-        if capabilities.get("descriptions"):
-            logger.info(f"✨ [DEMO] Capabilities: {capabilities['descriptions']}")
-            emit('capabilities', {'capabilities': capabilities['descriptions']})
+        # Add current user message
+        messages.append({
+            "role": "user",
+            "content": user_message
+        })
         
-        # Emit final response
-        emit('assistant_message', {'message': response})
+        logger.info(f"[MCP_SERVICE] Building conversation context...")
+        logger.info(f"[MCP_SERVICE] Adding {len(conversation_history)} conversation history messages")
+        logger.info(f"[MCP_SERVICE] Total messages: {len(messages)}")
         
-    except Exception as e:
-        logger.error(f"❌ [DEMO] Processing error: {e}")
-        emit('error', {'message': f'❌ Processing error: {str(e)}'})
-
-@socketio.on('set_credentials')
-def handle_set_credentials(data):
-    """Handle credential setting"""
-    session_id = request.sid
-    logger.info(f"🔐 [DEMO] Setting credentials for {session_id}")
+        return messages
     
-    try:
-        # Set environment variables
-        env_mapping = {
-            'username': 'API_USERNAME',
-            'password': 'API_PASSWORD',
-            'api_key_name': 'API_KEY_NAME',
-            'api_key_value': 'API_KEY_VALUE',
-            'login_url': 'LOGIN_URL',
-            'base_url': 'FORCE_BASE_URL'
-        }
+    def _build_tool_messages(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+        """Build tool result messages for Azure OpenAI."""
+        tool_messages = []
         
-        for key, value in data.items():
-            if value and key in env_mapping:
-                os.environ[env_mapping[key]] = value
-                logger.info(f"🔐 [DEMO] Set {env_mapping[key]}")
+        for tool_call in tool_calls:
+            if tool_call["success"]:
+                tool_messages.append({
+                    "role": "tool",
+                    "content": json.dumps(tool_call["result"]),
+                    "tool_call_id": tool_call.get("tool_call_id", "")
+                })
+            else:
+                tool_messages.append({
+                    "role": "tool",
+                    "content": f"Error: {tool_call['error']}",
+                    "tool_call_id": tool_call.get("tool_call_id", "")
+                })
         
-        emit('system_message', {'message': '✅ Credentials set successfully'})
+        return tool_messages
+    
+    def _analyze_capabilities(self, tool_calls: List[Dict[str, Any]], user_message: str) -> Dict[str, List[str]]:
+        """Analyze what capabilities were demonstrated."""
+        capabilities = []
         
-    except Exception as e:
-        logger.error(f"❌ [DEMO] Error setting credentials: {e}")
-        emit('error', {'message': f'❌ Error setting credentials: {str(e)}'})
-
-@socketio.on('clear_conversation')
-def handle_clear_conversation():
-    """Clear conversation history"""
-    session_id = request.sid
-    logger.info(f"🗑️ [DEMO] Clearing conversation for {session_id}")
+        for tool_call in tool_calls:
+            tool_name = tool_call["tool_name"]
+            
+            if "payment" in tool_name.lower():
+                capabilities.append("Payment processing and management")
+            elif "settlement" in tool_name.lower():
+                capabilities.append("Settlement and clearing operations")
+            elif "trade" in tool_name.lower():
+                capabilities.append("Trading and portfolio management")
+            elif "mailbox" in tool_name.lower() or "message" in tool_name.lower():
+                capabilities.append("Mailbox and notification management")
+            elif "alert" in tool_name.lower():
+                capabilities.append("Alert and monitoring systems")
+            elif "account" in tool_name.lower():
+                capabilities.append("Account and balance management")
+        
+        return {"descriptions": list(set(capabilities))}
     
-    demo_service.conversation = []
-    emit('system_message', {'message': '✅ Conversation cleared'})
-
-@socketio.on('get_tools')
-def handle_get_tools():
-    """Get available tools"""
-    session_id = request.sid
-    logger.info(f"🔧 [DEMO] Getting tools for {session_id}")
+    async def get_available_tools(self) -> List[Dict[str, Any]]:
+        """Get list of available tools."""
+        if not self._initialized or not self._tools:
+            return []
+        
+        return self._tools
     
-    try:
-        tools = async_loop.run_async(demo_service.get_tools())
-        emit('tools_list', {'tools': tools})
-        logger.info(f"✅ [DEMO] Sent {len(tools)} tools to {session_id}")
-    except Exception as e:
-        logger.error(f"❌ [DEMO] Error getting tools: {e}")
-        emit('error', {'message': f'❌ Error getting tools: {str(e)}'})
-
-if __name__ == '__main__':
-    print("🤖 Starting MCP Bot...")
-    print("🌐 Open http://localhost:5000 in your browser")
-    print("💬 Chat with your personal API assistant")
-    print()
-    
-    try:
-        socketio.run(app, host='0.0.0.0', port=5000, debug=False)
-    except KeyboardInterrupt:
-        print("\n👋 Shutting down MCP Bot...")
-    except Exception as e:
-        print(f"❌ Error starting MCP Bot: {e}")
-    finally:
-        # Cleanup async loop
-        if async_loop.loop:
-            async_loop.loop.call_soon_threadsafe(async_loop.loop.stop)
+    async def cleanup(self):
+        """Cleanup resources."""
+        if self._mcp_client:
+            await self._mcp_client.disconnect()
+        self._initialized = False
