@@ -171,6 +171,25 @@ class ModernLLMService:
         
             if choice.finish_reason == "tool_calls":
                 logger.info(f"🔄 [MCP_SERVICE] LLM requested {len(choice.message.tool_calls)} tool calls")
+                
+                # Add the assistant message with tool_calls to conversation history
+                assistant_message = {
+                    "role": "assistant",
+                    "content": choice.message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments or "{}"
+                            }
+                        }
+                        for tool_call in choice.message.tool_calls
+                    ]
+                }
+                messages.append(assistant_message)
+                
                 # Handle tool calls with modern capabilities
                 for i, tool_call in enumerate(choice.message.tool_calls, 1):
                     tool_name = tool_call.function.name

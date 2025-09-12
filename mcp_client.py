@@ -44,7 +44,17 @@ def count_tokens(text: str) -> int:
 
 def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
     """Truncate huge tool responses."""
-    text = json.dumps(obj)
+    # Handle objects with structured_content attribute
+    if hasattr(obj, 'structured_content'):
+        try:
+            # Try to serialize the structured_content first
+            text = json.dumps(obj.structured_content)
+        except (TypeError, ValueError):
+            # If structured_content is not serializable, convert to string
+            text = json.dumps(str(obj.structured_content))
+    else:
+        text = json.dumps(obj)
+    
     tokens = count_tokens(text)
     if tokens <= max_tokens:
         return obj
@@ -130,6 +140,25 @@ async def run_chat(mcp_cmd: str, user_query: str):
 
             choice = response.choices[0]
             if choice.finish_reason == "tool_calls":
+                # Add the assistant message with tool_calls to conversation history
+                assistant_message = {
+                    "role": "assistant",
+                    "content": choice.message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments or "{}"
+                            }
+                        }
+                        for tool_call in choice.message.tool_calls
+                    ]
+                }
+                messages.append(assistant_message)
+                
+                # Execute tool calls and add tool responses
                 for tool_call in choice.message.tool_calls:
                     tool_name = tool_call.function.name
                     args = json.loads(tool_call.function.arguments or "{}")
