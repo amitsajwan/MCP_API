@@ -107,10 +107,19 @@ def handle_connect():
         emit('system_message', {'message': '🔄 Initializing MCP service...'})
         
         # Run async initialization in the event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(demo_service.initialize())
+            # Check if there's already an event loop running
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an async context, we need to schedule the coroutine
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, demo_service.initialize())
+                    result = future.result()
+            except RuntimeError:
+                # No event loop running, safe to create one
+                result = asyncio.run(demo_service.initialize())
+            
             if result:
                 emit('system_message', {'message': '✅ MCP Service initialized - I can now understand and execute tools!'})
             else:
@@ -118,8 +127,6 @@ def handle_connect():
         except Exception as e:
             logger.error(f"❌ [DEMO] Initialization error: {e}")
             emit('error', {'message': f'❌ Initialization error: {str(e)}'})
-        finally:
-            loop.close()
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -144,10 +151,18 @@ def handle_message(data):
     # Process with MCP service
     try:
         # Run async processing in the event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
         try:
-            result = loop.run_until_complete(demo_service.process_message(message))
+            # Check if there's already an event loop running
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're in an async context, we need to schedule the coroutine
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(asyncio.run, demo_service.process_message(message))
+                    result = future.result()
+            except RuntimeError:
+                # No event loop running, safe to create one
+                result = asyncio.run(demo_service.process_message(message))
             
             # Extract components from result
             response = result.get("response", "")
@@ -183,8 +198,6 @@ def handle_message(data):
         except Exception as e:
             logger.error(f"❌ [DEMO] Processing error: {e}")
             emit('error', {'message': f'❌ Processing error: {str(e)}'})
-        finally:
-            loop.close()
             
     except Exception as e:
         logger.error(f"❌ [DEMO] Error handling message: {e}")
