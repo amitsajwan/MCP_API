@@ -23,9 +23,9 @@ def main():
     print("   - Needs Azure setup")
     print("   - More powerful")
     print()
-    print("3. Command Line (Demo)")
-    print("   - No setup needed")
-    print("   - Just for testing")
+    print("3. MCP OpenAPI Server")
+    print("   - Direct MCP server")
+    print("   - For development/testing")
     print()
     
     while True:
@@ -48,11 +48,11 @@ def main():
             break
             
         elif choice == "3":
-            print("\n🚀 Starting demo version...")
-            print("This doesn't need Azure setup")
+            print("\n🚀 Starting MCP OpenAPI server...")
+            print("This runs the MCP server directly")
             print("Press Ctrl+C to stop")
             print()
-            os.system("python intelligent_bot_demo.py")
+            os.system("python mcp_openapi_server.py openapi_specs/cash_api.yaml")
             break
             
         else:
