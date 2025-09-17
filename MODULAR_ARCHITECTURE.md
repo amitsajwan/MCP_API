@@ -29,8 +29,8 @@ from mcp_tool_executor import MockToolExecutor
 executor = MockToolExecutor()
 orchestrator = ToolOrchestrator(executor)
 
-# Execute tools with different strategies
-results = await orchestrator.execute_tool_calls(tool_calls, "parallel")
+# Execute tools with adaptive strategy
+results = await orchestrator.execute_tool_calls(tool_calls)
 ```
 
 ### 2. **LLMInterface** (`llm_interface.py`)
@@ -299,9 +299,7 @@ async def _execute_custom(self, tool_calls):
 ## 📈 **Performance Considerations**
 
 ### **Tool Execution**
-- **Parallel Execution**: Use `"parallel"` strategy for independent tools
-- **Sequential Execution**: Use `"sequential"` for dependent tools
-- **Adaptive Execution**: Use `"adaptive"` for mixed scenarios
+- **Adaptive Execution**: Intelligently executes tools based on dependencies and availability
 
 ### **Conversation Management**
 - **Context Windows**: Limit conversation history to prevent context overflow

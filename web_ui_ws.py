@@ -13,7 +13,7 @@ import logging
 import threading
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
-from mcp_service import ModernLLMService
+from modular_mcp_service import create_modular_service
 
 # Configure logging
 logging.basicConfig(
@@ -76,20 +76,15 @@ class MCPDemoService:
             return True
             
         try:
-            logger.info("🔄 [DEMO] Initializing MCP service...")
-            self.service = ModernLLMService()
-            result = await self.service.initialize()
-            self.initialized = result
+            logger.info("🔄 [DEMO] Initializing modular MCP service...")
+            self.service = await create_modular_service(use_mock=False)
+            self.initialized = True
             
-            if result:
-                logger.info("✅ [DEMO] MCP Service initialized successfully")
-                return True
-            else:
-                logger.error("❌ [DEMO] MCP Service initialization failed")
-                return False
+            logger.info("✅ [DEMO] Modular MCP Service initialized successfully")
+            return True
                 
         except Exception as e:
-            logger.error(f"❌ [DEMO] Error initializing MCP service: {e}")
+            logger.error(f"❌ [DEMO] Error initializing modular MCP service: {e}")
             return False
     
     async def process_message(self, message):
@@ -102,13 +97,15 @@ class MCPDemoService:
             }
         
         try:
-            # Add user message to conversation
+            # Process with modular MCP service
+            result = await self.service.process_message(
+                user_message=message,
+                conversation_history=self.conversation[-10:],  # Keep last 10 messages
+                session_id="web_session"
+            )
+            
+            # Add user and assistant messages to conversation
             self.conversation.append({"role": "user", "content": message})
-            
-            # Process with MCP service
-            result = await self.service.process_message(message, self.conversation[-10:])  # Keep last 10 messages
-            
-            # Add assistant response to conversation
             if result.get("response"):
                 self.conversation.append({"role": "assistant", "content": result.get("response", "")})
             

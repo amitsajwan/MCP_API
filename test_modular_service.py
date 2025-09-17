@@ -130,7 +130,7 @@ async def test_individual_components():
             }
         ]
         
-        results = await orchestrator.execute_tool_calls(tool_calls, "parallel")
+        results = await orchestrator.execute_tool_calls(tool_calls)
         print(f"Orchestrator executed {len(results)} tools")
         for result in results:
             print(f"  - {result.tool_name}: {'Success' if result.success else 'Failed'}")

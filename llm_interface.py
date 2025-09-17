@@ -41,8 +41,18 @@ class AzureOpenAIProvider(LLMProvider):
         """Get or create Azure OpenAI client"""
         if self._client is None:
             try:
-                from mcp_client import create_azure_client
-                self._client = await create_azure_client()
+                from openai import AsyncOpenAI
+                api_key = os.getenv("AZURE_OPENAI_API_KEY")
+                endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+                
+                if not api_key or not endpoint:
+                    raise ValueError("AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT must be set")
+                
+                self._client = AsyncOpenAI(
+                    api_key=api_key,
+                    base_url=f"{endpoint}/openai/deployments/{self.deployment_name}",
+                    api_version=self.api_version
+                )
             except Exception as e:
                 logger.error(f"❌ [LLM_INTERFACE] Failed to create Azure client: {e}")
                 raise

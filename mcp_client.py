@@ -15,8 +15,21 @@ from typing import Dict, Any, List
 
 from fastmcp import Client as MCPClient
 from fastmcp.client import PythonStdioTransport
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-from openai import AsyncAzureOpenAI
+
+# Conditional Azure imports
+try:
+    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    from openai import AsyncAzureOpenAI
+    AZURE_AVAILABLE = True
+except ImportError:
+    AZURE_AVAILABLE = False
+    # Define fallback classes
+    class DefaultAzureCredential:
+        pass
+    class AsyncAzureOpenAI:
+        pass
+    def get_bearer_token_provider(*args, **kwargs):
+        return None
 
 
 # ---------- CONFIG ----------
@@ -123,6 +136,9 @@ def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
 
 async def create_azure_client() -> AsyncAzureOpenAI:
     """Create Azure OpenAI client with Azure AD token provider."""
+    if not AZURE_AVAILABLE:
+        raise ImportError("Azure dependencies not available. Install azure-identity and openai packages.")
+    
     logging.info("🔄 [MCP_CLIENT] Creating Azure OpenAI client...")
     credential = DefaultAzureCredential()
     token_provider = get_bearer_token_provider(

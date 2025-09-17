@@ -35,8 +35,8 @@ except ImportError as e:
     logger.warning(f"Some MCP dependencies not available: {e}")
     # Define fallback classes
     class MCPToolExecutor:
-        def __init__(self, *args, **kwargs):
-            pass
+        def __init__(self, mcp_client=None, *args, **kwargs):
+            self.mcp_client = mcp_client
     class MockToolExecutor:
         def __init__(self, *args, **kwargs):
             pass
@@ -46,7 +46,7 @@ except ImportError as e:
     class PythonStdioTransport:
         def __init__(self, *args, **kwargs):
             pass
-    def list_and_prepare_tools(*args, **kwargs):
+    async def list_and_prepare_tools(*args, **kwargs):
         return []
     def create_azure_client(*args, **kwargs):
         return None
@@ -55,9 +55,10 @@ class ModularMCPService:
     """Modular MCP service with separated concerns"""
     
     def __init__(self, mcp_server_cmd: str = "python mcp_server_fastmcp2.py --transport stdio",
-                 use_mock: bool = False):
+                 use_mock: bool = False, use_mock_llm: bool = None):
         self.mcp_server_cmd = mcp_server_cmd
         self.use_mock = use_mock
+        self.use_mock_llm = use_mock_llm if use_mock_llm is not None else use_mock
         
         # Initialize components
         self.conversation_manager = ConversationManager()
@@ -80,7 +81,7 @@ class ModularMCPService:
             logger.info("🔄 [MODULAR_SERVICE] Starting initialization...")
             
             # Initialize LLM interface
-            if self.use_mock:
+            if self.use_mock_llm:
                 self.llm_interface = LLMInterface(MockLLMProvider())
             else:
                 self.llm_interface = LLMInterface(AzureOpenAIProvider())
@@ -100,7 +101,7 @@ class ModularMCPService:
             # Initialize tool orchestrator
             self.tool_orchestrator = ToolOrchestrator(self.tool_executor)
             
-            # Load tools if not using mock
+            # Load tools if not using mock executor
             if not self.use_mock:
                 self._tools = await self._load_tools()
             else:
@@ -129,8 +130,7 @@ class ModularMCPService:
             transport = PythonStdioTransport(script_path, args=args)
             mcp_client = MCPClient(transport)
             
-            # Connect
-            await mcp_client.__aenter__()
+            # Note: MCPClient doesn't need explicit connection with __aenter__
             logger.info("✅ [MODULAR_SERVICE] MCP client created and connected")
             
             return mcp_client
@@ -143,12 +143,19 @@ class ModularMCPService:
         """Load tools from MCP server"""
         try:
             logger.info("🔄 [MODULAR_SERVICE] Loading tools...")
+            logger.info(f"🔍 [MODULAR_SERVICE] Tool executor type: {type(self.tool_executor)}")
+            logger.info(f"🔍 [MODULAR_SERVICE] Tool executor has mcp_client: {hasattr(self.tool_executor, 'mcp_client') if self.tool_executor else 'No tool executor'}")
             
-            # This would use the actual MCP client to load tools
-            # For now, return empty list as placeholder
-            tools = []
-            logger.info(f"✅ [MODULAR_SERVICE] Loaded {len(tools)} tools")
-            return tools
+            # Use the MCP client to load tools
+            if self.tool_executor and hasattr(self.tool_executor, 'mcp_client'):
+                # Use async context manager for MCP client
+                async with self.tool_executor.mcp_client as client:
+                    tools = await list_and_prepare_tools(client)
+                    logger.info(f"✅ [MODULAR_SERVICE] Loaded {len(tools)} tools")
+                    return tools
+            else:
+                logger.warning("⚠️ [MODULAR_SERVICE] No MCP client available for tool loading")
+                return []
             
         except Exception as e:
             logger.error(f"❌ [MODULAR_SERVICE] Failed to load tools: {e}")
@@ -235,9 +242,7 @@ class ModularMCPService:
                     logger.info(f"🔧 [MODULAR_SERVICE] Executing {len(tool_calls)} tool calls")
                     
                     # Execute tools through orchestrator
-                    tool_results = await self.tool_orchestrator.execute_tool_calls(
-                        tool_calls, execution_strategy="adaptive"
-                    )
+                    tool_results = await self.tool_orchestrator.execute_tool_calls(tool_calls)
                     
                     # Add tool results to conversation
                     for result in tool_results:
@@ -322,9 +327,12 @@ class ModularMCPService:
             logger.error(f"❌ [MODULAR_SERVICE] Error during cleanup: {e}")
 
 # Factory function for easy instantiation
-async def create_modular_service(mcp_server_cmd: str = None, use_mock: bool = False) -> ModularMCPService:
+async def create_modular_service(mcp_server_cmd: str = None, use_mock: bool = False, 
+                                use_mock_llm: bool = None) -> ModularMCPService:
     """Factory function to create and initialize a modular MCP service"""
-    service = ModularMCPService(mcp_server_cmd, use_mock)
+    if mcp_server_cmd is None:
+        mcp_server_cmd = "python mcp_server_fastmcp2.py --transport stdio"
+    service = ModularMCPService(mcp_server_cmd, use_mock, use_mock_llm)
     success = await service.initialize()
     
     if not success:
