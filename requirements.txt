@@ -2,3 +2,7 @@ mcp>=1.0.0
 httpx>=0.25.0
 pyyaml>=6.0
 asyncio
+fastmcp>=2.0.0
+openai>=1.0.0
+flask>=3.0.0
+flask-socketio>=5.0.0

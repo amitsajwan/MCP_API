@@ -7,7 +7,7 @@ My smart assistant that understands what you need and does it for you
 import asyncio
 import json
 import os
-from mcp_service import ModernLLMService
+from modular_mcp_service import create_modular_service
 
 async def run_intelligent_bot():
     """Run my personal API assistant"""
@@ -25,17 +25,15 @@ async def run_intelligent_bot():
     print("Type 'quit' when you're done")
     print()
     
-    # Initialize the MCP service
-    print("🔄 Initializing MCP service...")
-    service = ModernLLMService()
-    success = await service.initialize()
-    
-    if not success:
-        print("❌ Failed to initialize MCP service")
+    # Initialize the modular MCP service
+    print("🔄 Initializing modular MCP service...")
+    try:
+        service = await create_modular_service(use_mock=False)
+        print("✅ Modular MCP service initialized successfully")
+    except Exception as e:
+        print(f"❌ Failed to initialize modular MCP service: {e}")
         print("Make sure your Azure credentials are configured")
         return
-    
-    print("✅ MCP service initialized with 51 tools")
     print()
     
     while True:
@@ -52,8 +50,11 @@ async def run_intelligent_bot():
             
             print("🧠 Analyzing your request...")
             
-            # Process with intelligent LLM service
-            result = await service.process_message(user_input)
+            # Process with modular MCP service
+            result = await service.process_message(
+                user_message=user_input,
+                session_id="cli_session"
+            )
             
             if 'error' in result:
                 print(f"❌ Error: {result['error']}")

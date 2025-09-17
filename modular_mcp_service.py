@@ -144,11 +144,14 @@ class ModularMCPService:
         try:
             logger.info("🔄 [MODULAR_SERVICE] Loading tools...")
             
-            # This would use the actual MCP client to load tools
-            # For now, return empty list as placeholder
-            tools = []
-            logger.info(f"✅ [MODULAR_SERVICE] Loaded {len(tools)} tools")
-            return tools
+            # Use the MCP client to load tools
+            if self.tool_executor and hasattr(self.tool_executor, 'mcp_client'):
+                tools = await list_and_prepare_tools(self.tool_executor.mcp_client)
+                logger.info(f"✅ [MODULAR_SERVICE] Loaded {len(tools)} tools")
+                return tools
+            else:
+                logger.warning("⚠️ [MODULAR_SERVICE] No MCP client available for tool loading")
+                return []
             
         except Exception as e:
             logger.error(f"❌ [MODULAR_SERVICE] Failed to load tools: {e}")
