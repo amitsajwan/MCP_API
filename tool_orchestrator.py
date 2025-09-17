@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Tool Orchestrator - Modular Tool Execution Management
+Tool Orchestrator - Adaptive Tool Execution Management
 ====================================================
-Handles the execution of multiple tools through LLM coordination.
-Provides intelligent tool selection, chaining, and error handling.
+Handles the execution of multiple tools using adaptive strategy.
+Intelligently executes tools based on dependencies and availability.
 """
 
 import asyncio
@@ -48,89 +48,26 @@ class ToolResult:
         }
 
 class ToolOrchestrator:
-    """Orchestrates the execution of multiple tools through LLM coordination"""
+    """Orchestrates the execution of multiple tools using adaptive strategy"""
     
     def __init__(self, tool_executor: ToolExecutor, max_concurrent_tools: int = 5):
         self.tool_executor = tool_executor
         self.max_concurrent_tools = max_concurrent_tools
         self.execution_history: List[ToolResult] = []
         
-    async def execute_tool_calls(self, tool_calls: List[Dict[str, Any]], 
-                                execution_strategy: str = "sequential") -> List[ToolResult]:
+    async def execute_tool_calls(self, tool_calls: List[Dict[str, Any]]) -> List[ToolResult]:
         """
-        Execute multiple tool calls based on the specified strategy
+        Execute multiple tool calls using adaptive strategy
         
         Args:
             tool_calls: List of tool call dictionaries from LLM
-            execution_strategy: "sequential", "parallel", or "adaptive"
         
         Returns:
             List of ToolResult objects
         """
-        logger.info(f"🔧 [ORCHESTRATOR] Executing {len(tool_calls)} tool calls with {execution_strategy} strategy")
-        
-        if execution_strategy == "sequential":
-            return await self._execute_sequential(tool_calls)
-        elif execution_strategy == "parallel":
-            return await self._execute_parallel(tool_calls)
-        elif execution_strategy == "adaptive":
-            return await self._execute_adaptive(tool_calls)
-        else:
-            logger.warning(f"Unknown execution strategy: {execution_strategy}, falling back to sequential")
-            return await self._execute_sequential(tool_calls)
+        logger.info(f"🔧 [ORCHESTRATOR] Executing {len(tool_calls)} tool calls with adaptive strategy")
+        return await self._execute_adaptive(tool_calls)
     
-    async def _execute_sequential(self, tool_calls: List[Dict[str, Any]]) -> List[ToolResult]:
-        """Execute tools one by one in sequence"""
-        results = []
-        
-        for i, tool_call in enumerate(tool_calls, 1):
-            logger.info(f"🔧 [ORCHESTRATOR] Executing tool {i}/{len(tool_calls)}: {tool_call.get('function', {}).get('name', 'unknown')}")
-            
-            result = await self._execute_single_tool(tool_call)
-            results.append(result)
-            
-            # Add to execution history
-            self.execution_history.append(result)
-            
-            # If tool failed and it's critical, stop execution
-            if not result.success and self._is_critical_tool(tool_call):
-                logger.error(f"❌ [ORCHESTRATOR] Critical tool failed, stopping execution")
-                break
-        
-        return results
-    
-    async def _execute_parallel(self, tool_calls: List[Dict[str, Any]]) -> List[ToolResult]:
-        """Execute tools in parallel with concurrency limit"""
-        results = []
-        
-        # Create semaphore to limit concurrent executions
-        semaphore = asyncio.Semaphore(self.max_concurrent_tools)
-        
-        async def execute_with_semaphore(tool_call):
-            async with semaphore:
-                return await self._execute_single_tool(tool_call)
-        
-        # Execute all tools concurrently
-        tasks = [execute_with_semaphore(tool_call) for tool_call in tool_calls]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Convert exceptions to failed results
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                tool_call = tool_calls[i]
-                processed_results.append(ToolResult(
-                    tool_call_id=tool_call.get("id", f"call_{i}"),
-                    tool_name=tool_call.get("function", {}).get("name", "unknown"),
-                    args=json.loads(tool_call.get("function", {}).get("arguments", "{}")),
-                    error=str(result),
-                    success=False
-                ))
-            else:
-                processed_results.append(result)
-                self.execution_history.append(result)
-        
-        return processed_results
     
     async def _execute_adaptive(self, tool_calls: List[Dict[str, Any]]) -> List[ToolResult]:
         """Execute tools with adaptive strategy based on dependencies"""
@@ -152,7 +89,7 @@ class ToolOrchestrator:
             
             # Execute executable tools in parallel
             logger.info(f"🔧 [ORCHESTRATOR] Executing {len(executable_calls)} tools in parallel")
-            parallel_results = await self._execute_parallel(executable_calls)
+            parallel_results = await self._execute_parallel_batch(executable_calls)
             results.extend(parallel_results)
             
             # Remove executed tools from remaining
@@ -160,6 +97,39 @@ class ToolOrchestrator:
                 remaining_calls.remove(tool_call)
         
         return results
+    
+    async def _execute_parallel_batch(self, tool_calls: List[Dict[str, Any]]) -> List[ToolResult]:
+        """Execute a batch of tools in parallel with concurrency limit"""
+        # Create semaphore to limit concurrent executions
+        semaphore = asyncio.Semaphore(self.max_concurrent_tools)
+        
+        async def execute_with_semaphore(tool_call):
+            async with semaphore:
+                return await self._execute_single_tool(tool_call)
+        
+        # Execute all tools concurrently
+        tasks = [execute_with_semaphore(tool_call) for tool_call in tool_calls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Convert exceptions to failed results and add to history
+        processed_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                tool_call = tool_calls[i]
+                failed_result = ToolResult(
+                    tool_call_id=tool_call.get("id", f"call_{i}"),
+                    tool_name=tool_call.get("function", {}).get("name", "unknown"),
+                    args=json.loads(tool_call.get("function", {}).get("arguments", "{}")),
+                    error=str(result),
+                    success=False
+                )
+                processed_results.append(failed_result)
+                self.execution_history.append(failed_result)
+            else:
+                processed_results.append(result)
+                self.execution_history.append(result)
+        
+        return processed_results
     
     async def _execute_single_tool(self, tool_call: Dict[str, Any]) -> ToolResult:
         """Execute a single tool call"""

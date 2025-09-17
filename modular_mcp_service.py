@@ -238,9 +238,7 @@ class ModularMCPService:
                     logger.info(f"🔧 [MODULAR_SERVICE] Executing {len(tool_calls)} tool calls")
                     
                     # Execute tools through orchestrator
-                    tool_results = await self.tool_orchestrator.execute_tool_calls(
-                        tool_calls, execution_strategy="adaptive"
-                    )
+                    tool_results = await self.tool_orchestrator.execute_tool_calls(tool_calls)
                     
                     # Add tool results to conversation
                     for result in tool_results:
