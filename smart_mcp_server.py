@@ -97,8 +97,11 @@ class SmartMCPServer:
             for spec_file in spec_files:
                 await self._load_openapi_spec(spec_file)
             
+            # Analyze relationships after loading all specs
+            await self._analyze_api_relationships()
+            
             logger.info(f"✅ Initialized {len(self.mcp_instances)} MCP instances")
-            logger.info(f"🔗 Loaded {len(self.api_relationships)} API relationships")
+            logger.info(f"🔗 Detected {len(self.api_relationships)} API relationships dynamically")
             return True
             
         except Exception as e:
@@ -106,40 +109,12 @@ class SmartMCPServer:
             return False
     
     async def _load_api_relationships(self):
-        """Load API relationships configuration"""
-        # Define intelligent API relationships
-        self.api_relationships = {
-            # Cash API relationships
-            'cash_api': {
-                'depends_on': [],
-                'calls_after': ['securities_api'],  # Cash operations often follow securities trades
-                'uses_data_from': ['securities_api', 'cls_api'],
-                'provides_data_to': ['cls_api']
-            },
-            # Securities API relationships
-            'securities_api': {
-                'depends_on': [],
-                'calls_after': [],
-                'uses_data_from': [],
-                'provides_data_to': ['cash_api', 'cls_api']
-            },
-            # CLS API relationships
-            'cls_api': {
-                'depends_on': ['cash_api', 'securities_api'],
-                'calls_after': ['cash_api', 'securities_api'],
-                'uses_data_from': ['cash_api', 'securities_api'],
-                'provides_data_to': []
-            },
-            # Mailbox API relationships
-            'mailbox_api': {
-                'depends_on': [],
-                'calls_after': ['cash_api', 'securities_api', 'cls_api'],
-                'uses_data_from': ['cash_api', 'securities_api', 'cls_api'],
-                'provides_data_to': []
-            }
-        }
+        """Dynamically detect API relationships from OpenAPI specifications"""
+        self.api_relationships = {}
+        logger.info("🔗 Analyzing OpenAPI specifications for dynamic relationships...")
         
-        logger.info("🔗 API relationships loaded")
+        # This will be populated after we load the specs
+        # We'll analyze the actual OpenAPI specs to detect relationships
     
     async def _load_openapi_spec(self, spec_file: Path):
         """Load a single OpenAPI specification and create MCP instance"""
@@ -166,10 +141,177 @@ class SmartMCPServer:
             self.mcp_instances[spec_name] = mcp_instance
             self.http_clients[spec_name] = client
             
+            # Store spec data for relationship analysis
+            if not hasattr(self, 'spec_data'):
+                self.spec_data = {}
+            self.spec_data[spec_name] = spec_data
+            
             logger.info(f"✅ Created MCP instance for {spec_name}")
             
         except Exception as e:
             logger.error(f"❌ Failed to load spec {spec_file}: {e}")
+    
+    async def _analyze_api_relationships(self):
+        """Analyze OpenAPI specifications to detect dynamic relationships"""
+        if not hasattr(self, 'spec_data') or not self.spec_data:
+            logger.warning("No spec data available for relationship analysis")
+            return
+        
+        logger.info("🔍 Analyzing OpenAPI specs for dynamic relationships...")
+        
+        for spec_name, spec_data in self.spec_data.items():
+            self.api_relationships[spec_name] = {
+                'depends_on': [],
+                'calls_after': [],
+                'uses_data_from': [],
+                'provides_data_to': [],
+                'detected_patterns': []
+            }
+            
+            # Analyze paths and operations
+            paths = spec_data.get('paths', {})
+            for path, path_item in paths.items():
+                for method, operation in path_item.items():
+                    if method.lower() in ['get', 'post', 'put', 'delete', 'patch']:
+                        await self._analyze_operation(spec_name, method, path, operation)
+        
+        # Post-process to detect cross-API relationships
+        await self._detect_cross_api_relationships()
+        
+        logger.info(f"✅ Dynamic relationship analysis completed for {len(self.api_relationships)} APIs")
+    
+    async def _analyze_operation(self, spec_name: str, method: str, path: str, operation: dict):
+        """Analyze a single operation for relationship patterns"""
+        operation_id = operation.get('operationId', f"{method}_{path.replace('/', '_').strip('_')}")
+        summary = operation.get('summary', '')
+        description = operation.get('description', '')
+        tags = operation.get('tags', [])
+        
+        # Detect patterns based on operation characteristics
+        patterns = []
+        
+        # Read operations (GET) - likely provide data to other APIs
+        if method.upper() == 'GET':
+            patterns.append('data_provider')
+            self.api_relationships[spec_name]['provides_data_to'].append('other_apis')
+        
+        # Write operations (POST/PUT/PATCH) - likely depend on data from other APIs
+        elif method.upper() in ['POST', 'PUT', 'PATCH']:
+            patterns.append('data_consumer')
+            self.api_relationships[spec_name]['uses_data_from'].append('other_apis')
+        
+        # Delete operations - likely cleanup operations
+        elif method.upper() == 'DELETE':
+            patterns.append('cleanup_operation')
+            self.api_relationships[spec_name]['calls_after'].append('other_apis')
+        
+        # Analyze parameters for cross-API references
+        parameters = operation.get('parameters', [])
+        for param in parameters:
+            param_name = param.get('name', '')
+            param_description = param.get('description', '')
+            
+            # Look for references to other APIs
+            if any(keyword in param_description.lower() for keyword in ['id', 'reference', 'token', 'session']):
+                patterns.append('cross_api_reference')
+        
+        # Analyze request body for relationships
+        request_body = operation.get('requestBody', {})
+        if request_body:
+            content = request_body.get('content', {})
+            if 'application/json' in content:
+                schema = content['application/json'].get('schema', {})
+                if '$ref' in schema:
+                    patterns.append('complex_data_structure')
+        
+        # Store detected patterns
+        if patterns:
+            self.api_relationships[spec_name]['detected_patterns'].extend(patterns)
+    
+    async def _detect_cross_api_relationships(self):
+        """Detect relationships between different APIs based on common patterns"""
+        api_names = list(self.api_relationships.keys())
+        
+        for i, api1 in enumerate(api_names):
+            for api2 in api_names[i+1:]:
+                # Check for common patterns that suggest relationships
+                if await self._apis_have_relationship(api1, api2):
+                    # Add bidirectional relationship
+                    self.api_relationships[api1]['calls_after'].append(api2)
+                    self.api_relationships[api2]['depends_on'].append(api1)
+                    
+                    logger.info(f"🔗 Detected relationship: {api1} -> {api2}")
+    
+    async def _apis_have_relationship(self, api1: str, api2: str) -> bool:
+        """Check if two APIs have a relationship based on their characteristics"""
+        if not hasattr(self, 'spec_data'):
+            return False
+        
+        spec1 = self.spec_data.get(api1, {})
+        spec2 = self.spec_data.get(api2, {})
+        
+        if not spec1 or not spec2:
+            return False
+        
+        # Simple heuristics for relationship detection
+        paths1 = spec1.get('paths', {})
+        paths2 = spec2.get('paths', {})
+        
+        # Check for common path patterns
+        common_patterns = []
+        for path1 in paths1.keys():
+            for path2 in paths2.keys():
+                # Check for similar path structures
+                if self._paths_are_related(path1, path2):
+                    common_patterns.append((path1, path2))
+        
+        # Check for common operation patterns
+        operations1 = self._get_all_operations(spec1)
+        operations2 = self._get_all_operations(spec2)
+        
+        # If APIs have complementary operations (read vs write), they might be related
+        has_read_write_complement = (
+            any(op.get('method') == 'GET' for op in operations1) and
+            any(op.get('method') in ['POST', 'PUT', 'PATCH'] for op in operations2)
+        ) or (
+            any(op.get('method') in ['POST', 'PUT', 'PATCH'] for op in operations1) and
+            any(op.get('method') == 'GET' for op in operations2)
+        )
+        
+        return len(common_patterns) > 0 or has_read_write_complement
+    
+    def _paths_are_related(self, path1: str, path2: str) -> bool:
+        """Check if two API paths are related"""
+        # Simple heuristics for path relationships
+        path1_parts = path1.split('/')
+        path2_parts = path2.split('/')
+        
+        # Check for common path segments
+        common_segments = set(path1_parts) & set(path2_parts)
+        if len(common_segments) > 1:  # More than just empty string
+            return True
+        
+        # Check for similar patterns (e.g., both have IDs)
+        has_id1 = any('{' in part and '}' in part for part in path1_parts)
+        has_id2 = any('{' in part and '}' in part for part in path2_parts)
+        
+        return has_id1 and has_id2
+    
+    def _get_all_operations(self, spec: dict) -> list:
+        """Extract all operations from an OpenAPI spec"""
+        operations = []
+        paths = spec.get('paths', {})
+        
+        for path, path_item in paths.items():
+            for method, operation in path_item.items():
+                if method.lower() in ['get', 'post', 'put', 'delete', 'patch']:
+                    operations.append({
+                        'method': method.upper(),
+                        'path': path,
+                        'operation': operation
+                    })
+        
+        return operations
     
     async def _create_authenticated_client(self, spec_data: Dict[str, Any], spec_name: str) -> httpx.AsyncClient:
         """Create an authenticated HTTP client with JSESSIONID and API key support"""
@@ -347,24 +489,38 @@ class SmartMCPServer:
         )
     
     def _determine_api_call_order(self, requested_tools: List[str]) -> List[Tuple[str, str]]:
-        """Determine the optimal order for API calls based on relationships"""
+        """Determine the optimal order for API calls based on dynamically detected relationships"""
         api_calls = []
         
-        # Group tools by API
+        # Group tools by API (try to match tool names to API specs)
         api_tools = {}
         for tool_name in requested_tools:
-            for spec_name, mcp_instance in self.mcp_instances.items():
-                try:
-                    # This is a simplified check - in reality you'd need to check if tool exists
-                    if spec_name in tool_name.lower() or any(api in tool_name.lower() for api in ['cash', 'securities', 'cls', 'mailbox']):
-                        if spec_name not in api_tools:
-                            api_tools[spec_name] = []
-                        api_tools[spec_name].append(tool_name)
+            matched_api = None
+            
+            # Try to match tool name to API spec names
+            for spec_name in self.mcp_instances.keys():
+                if spec_name.lower() in tool_name.lower() or tool_name.lower().startswith(spec_name.lower()):
+                    matched_api = spec_name
+                    break
+            
+            # If no direct match, try to infer from tool name patterns
+            if not matched_api:
+                for spec_name in self.mcp_instances.keys():
+                    # Simple heuristics for tool-to-API mapping
+                    if any(keyword in tool_name.lower() for keyword in spec_name.lower().split('_')):
+                        matched_api = spec_name
                         break
-                except:
-                    continue
+            
+            # Default to first available API if no match found
+            if not matched_api and self.mcp_instances:
+                matched_api = list(self.mcp_instances.keys())[0]
+            
+            if matched_api:
+                if matched_api not in api_tools:
+                    api_tools[matched_api] = []
+                api_tools[matched_api].append(tool_name)
         
-        # Determine call order based on relationships
+        # Determine call order based on detected relationships
         call_order = []
         processed_apis = set()
         
@@ -372,9 +528,15 @@ class SmartMCPServer:
         for api_name in api_tools.keys():
             if api_name in self.api_relationships:
                 deps = self.api_relationships[api_name].get('depends_on', [])
-                if not deps or all(dep in processed_apis for dep in deps):
+                # Filter out generic dependencies like 'other_apis'
+                real_deps = [dep for dep in deps if dep in api_tools and dep != 'other_apis']
+                if not real_deps or all(dep in processed_apis for dep in real_deps):
                     call_order.append(api_name)
                     processed_apis.add(api_name)
+            else:
+                # If no relationship info, add to order
+                call_order.append(api_name)
+                processed_apis.add(api_name)
         
         # Then add remaining APIs
         for api_name in api_tools.keys():
@@ -387,6 +549,7 @@ class SmartMCPServer:
             for tool_name in api_tools[api_name]:
                 api_calls.append((api_name, tool_name))
         
+        logger.info(f"🔗 Determined call order: {[api for api, _ in api_calls]}")
         return api_calls
     
     async def get_tools(self) -> List[Dict[str, Any]]:

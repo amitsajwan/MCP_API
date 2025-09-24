@@ -177,25 +177,35 @@ Actual API Endpoints
 
 ## 🔗 API Relationship Intelligence
 
-### Relationship Types
-- **depends_on**: APIs that must be called first
+### Dynamic Relationship Detection
+The system automatically analyzes OpenAPI specifications to detect relationships:
+
+- **Pattern Detection**: Analyzes operation types (GET, POST, PUT, DELETE)
+- **Path Analysis**: Detects common path patterns and structures
+- **Cross-API References**: Identifies parameters that reference other APIs
+- **Operation Complementarity**: Detects read/write operation pairs
+
+### Detected Relationship Types
+- **depends_on**: APIs that must be called first (based on detected patterns)
 - **calls_after**: APIs that should be called after others
 - **uses_data_from**: APIs that consume data from others
 - **provides_data_to**: APIs that provide data to others
+- **detected_patterns**: Specific patterns found in the API (data_provider, data_consumer, etc.)
 
 ### Smart Call Ordering
-- Automatic dependency resolution
-- Optimal execution sequence
+- Automatic dependency resolution based on detected patterns
+- Optimal execution sequence using dynamic analysis
 - Relationship-aware tool execution
-- Call history tracking
+- Call history tracking and learning
 
-### Example Relationships
+### Example Dynamic Relationships
 ```python
 'cash_api': {
     'depends_on': [],
     'calls_after': ['securities_api'],
-    'uses_data_from': ['securities_api', 'cls_api'],
-    'provides_data_to': ['cls_api']
+    'uses_data_from': ['other_apis'],
+    'provides_data_to': ['other_apis'],
+    'detected_patterns': ['data_provider', 'data_consumer', 'cross_api_reference']
 }
 ```
 

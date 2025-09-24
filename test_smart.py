@@ -38,15 +38,21 @@ async def test_smart_system():
         logger.info("✅ Server initialized successfully")
         
         # Test API relationships
-        logger.info("🔗 Testing API relationships...")
+        logger.info("🔗 Testing dynamic API relationship detection...")
         relationships = await server.get_api_relationships()
         
         if relationships.get("relationships"):
-            logger.info("✅ API relationships loaded:")
+            logger.info("✅ Dynamic API relationships detected:")
             for api, rels in relationships["relationships"].items():
-                logger.info(f"  - {api}: depends_on={rels.get('depends_on', [])}, calls_after={rels.get('calls_after', [])}")
+                patterns = rels.get('detected_patterns', [])
+                deps = [d for d in rels.get('depends_on', []) if d != 'other_apis']
+                calls_after = [d for d in rels.get('calls_after', []) if d != 'other_apis']
+                logger.info(f"  - {api}:")
+                logger.info(f"    Patterns: {patterns}")
+                logger.info(f"    Dependencies: {deps}")
+                logger.info(f"    Calls after: {calls_after}")
         else:
-            logger.warning("⚠️ No API relationships found")
+            logger.warning("⚠️ No API relationships detected")
         
         # Test getting tools
         logger.info("🔧 Testing tool retrieval...")

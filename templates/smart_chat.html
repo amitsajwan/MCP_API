@@ -568,7 +568,7 @@
 
         function updateApiRelationships(relationships) {
             if (!relationships || !relationships.relationships) {
-                apiRelationships.innerHTML = '<div>No relationships loaded</div>';
+                apiRelationships.innerHTML = '<div>No relationships detected</div>';
                 return;
             }
 
@@ -578,10 +578,15 @@
             Object.keys(rels).forEach(api => {
                 const relDiv = document.createElement('div');
                 relDiv.className = 'relationship-item';
+                
+                const patterns = rels[api].detected_patterns || [];
+                const patternText = patterns.length > 0 ? patterns.join(', ') : 'No patterns detected';
+                
                 relDiv.innerHTML = `
                     <strong>${api}</strong><br>
-                    <small>Dependencies: ${rels[api].depends_on?.join(', ') || 'None'}</small><br>
-                    <small>Calls after: ${rels[api].calls_after?.join(', ') || 'None'}</small>
+                    <small>Patterns: ${patternText}</small><br>
+                    <small>Dependencies: ${rels[api].depends_on?.filter(d => d !== 'other_apis').join(', ') || 'None'}</small><br>
+                    <small>Calls after: ${rels[api].calls_after?.filter(d => d !== 'other_apis').join(', ') || 'None'}</small>
                 `;
                 apiRelationships.appendChild(relDiv);
             });
