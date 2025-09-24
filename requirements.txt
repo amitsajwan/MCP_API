@@ -1,4 +1,4 @@
-# Simplified FastMCP System Requirements
+# Smart MCP System Requirements
 fastmcp>=2.0.0
 httpx>=0.25.0
 pyyaml>=6.0
