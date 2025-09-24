@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from fastmcp import FastMCP
+import openai
 
 # Configure logging
 logging.basicConfig(
@@ -58,6 +59,7 @@ class SmartMCPServer:
         self.session_id = None
         self.api_relationships = {}
         self.call_history = []
+        self.conversation_history = []
         
         # Authentication state
         self.username = os.getenv('API_USERNAME')
@@ -70,11 +72,18 @@ class SmartMCPServer:
         # Response truncation settings
         self.max_response_items = int(os.getenv('MAX_RESPONSE_ITEMS', '100'))
         
-        logger.info("🧠 Initializing Smart MCP Server...")
+        # LLM configuration
+        self.openai_client = None
+        self.llm_model = os.getenv('LLM_MODEL', 'gpt-4o')
+        self.llm_enabled = os.getenv('LLM_ENABLED', 'true').lower() == 'true'
+        
+        logger.info("🧠 Initializing Smart MCP Server with LLM Integration...")
         logger.info(f"📂 OpenAPI directory: {self.openapi_dir}")
         logger.info(f"🔐 Username: {self.username or 'Not set'}")
         logger.info(f"🌐 Base URL: {self.base_url}")
         logger.info(f"📊 Max response items: {self.max_response_items}")
+        logger.info(f"🤖 LLM enabled: {self.llm_enabled}")
+        logger.info(f"🧠 LLM model: {self.llm_model}")
     
     async def initialize(self) -> bool:
         """Initialize the server with API relationship mapping"""
@@ -100,8 +109,14 @@ class SmartMCPServer:
             # Analyze relationships after loading all specs
             await self._analyze_api_relationships()
             
+            # Initialize LLM if enabled
+            if self.llm_enabled:
+                await self._initialize_llm()
+            
             logger.info(f"✅ Initialized {len(self.mcp_instances)} MCP instances")
             logger.info(f"🔗 Detected {len(self.api_relationships)} API relationships dynamically")
+            if self.llm_enabled:
+                logger.info(f"🤖 LLM initialized with model: {self.llm_model}")
             return True
             
         except Exception as e:
