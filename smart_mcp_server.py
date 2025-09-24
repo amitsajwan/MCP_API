@@ -18,7 +18,18 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass
 from fastmcp import FastMCP
-import openai
+
+# Azure OpenAI imports
+try:
+    from openai import AsyncAzureOpenAI
+    from azure.identity import DefaultAzureCredential
+    from azure.identity.aio import get_bearer_token_provider
+    AZURE_AVAILABLE = True
+except ImportError:
+    AZURE_AVAILABLE = False
+    AsyncAzureOpenAI = None
+    DefaultAzureCredential = None
+    get_bearer_token_provider = None
 
 # Configure logging
 logging.basicConfig(
@@ -30,6 +41,10 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("smart_mcp")
+
+# Azure OpenAI configuration
+AZURE_ENDPOINT = os.getenv('AZURE_OPENAI_ENDPOINT')
+API_VERSION = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-15-preview')
 
 @dataclass
 class APIRelationship:
@@ -327,6 +342,259 @@ class SmartMCPServer:
                     })
         
         return operations
+    
+    async def _create_azure_client(self) -> AsyncAzureOpenAI:
+        """Create Azure OpenAI client with Azure AD token provider."""
+        if not AZURE_AVAILABLE:
+            raise ImportError("Azure dependencies not available. Install azure-identity and openai packages.")
+        
+        if not AZURE_ENDPOINT:
+            raise ValueError("AZURE_OPENAI_ENDPOINT environment variable not set")
+        
+        logger.info("🔄 Creating Azure OpenAI client...")
+        credential = DefaultAzureCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        client = AsyncAzureOpenAI(
+            azure_endpoint=AZURE_ENDPOINT,
+            azure_ad_token_provider=token_provider,
+            api_version=API_VERSION
+        )
+        logger.info("✅ Azure OpenAI client created")
+        return client
+    
+    async def _initialize_llm(self):
+        """Initialize the LLM client"""
+        try:
+            self.openai_client = await self._create_azure_client()
+            logger.info("🤖 LLM client initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize LLM client: {e}")
+            self.llm_enabled = False
+    
+    async def _get_enhanced_tool_descriptions(self) -> List[Dict[str, Any]]:
+        """Get enhanced tool descriptions for LLM understanding"""
+        tools = await self.get_tools()
+        enhanced_tools = []
+        
+        for tool in tools:
+            enhanced_tool = {
+                "type": "function",
+                "function": {
+                    "name": tool.get("name", "unknown"),
+                    "description": tool.get("description", "No description available"),
+                    "parameters": tool.get("inputSchema", {})
+                }
+            }
+            
+            # Add relationship context to description
+            tool_name = tool.get("name", "")
+            for spec_name, relationships in self.api_relationships.items():
+                if spec_name.lower() in tool_name.lower():
+                    patterns = relationships.get("detected_patterns", [])
+                    if patterns:
+                        enhanced_tool["function"]["description"] += f"\n\nAPI Patterns: {', '.join(patterns)}"
+                    break
+            
+            enhanced_tools.append(enhanced_tool)
+        
+        return enhanced_tools
+    
+    async def _process_with_llm(self, user_message: str) -> Dict[str, Any]:
+        """Process user message with LLM to determine tool calls"""
+        if not self.llm_enabled or not self.openai_client:
+            return {"error": "LLM not available"}
+        
+        try:
+            # Get enhanced tool descriptions
+            tools = await self._get_enhanced_tool_descriptions()
+            
+            # Prepare conversation context
+            messages = [
+                {
+                    "role": "system",
+                    "content": """You are an intelligent API assistant with access to multiple APIs. 
+                    You can analyze user requests and determine which tools to call and in what order.
+                    
+                    Key capabilities:
+                    - Analyze user requests to understand intent
+                    - Select appropriate tools based on available APIs
+                    - Chain tool calls when needed (use output from one tool as input to another)
+                    - Handle complex multi-step workflows
+                    - Provide clear explanations of your actions
+                    
+                    Available APIs and their patterns:
+                    """ + json.dumps(self.api_relationships, indent=2)
+                }
+            ]
+            
+            # Add conversation history
+            messages.extend(self.conversation_history[-10:])  # Last 10 messages
+            
+            # Add current user message
+            messages.append({
+                "role": "user",
+                "content": user_message
+            })
+            
+            # Call LLM with tools
+            response = await self.openai_client.chat.completions.create(
+                model=self.llm_model,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                temperature=0.1
+            )
+            
+            # Process response
+            message = response.choices[0].message
+            tool_calls = message.tool_calls or []
+            
+            # Add to conversation history
+            self.conversation_history.append({
+                "role": "user",
+                "content": user_message
+            })
+            self.conversation_history.append({
+                "role": "assistant",
+                "content": message.content or "",
+                "tool_calls": tool_calls
+            })
+            
+            return {
+                "response": message.content or "",
+                "tool_calls": tool_calls,
+                "usage": response.usage.dict() if response.usage else {}
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ LLM processing error: {e}")
+            return {"error": str(e)}
+    
+    async def _execute_tool_chain(self, tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Execute a chain of tool calls with intelligent parameter passing"""
+        results = []
+        
+        for tool_call in tool_calls:
+            tool_name = tool_call.function.name
+            arguments = json.loads(tool_call.function.arguments)
+            
+            # Enhance arguments with data from previous tool results
+            enhanced_arguments = await self._enhance_arguments_with_context(arguments, results)
+            
+            # Execute the tool
+            result = await self.execute_tool(tool_name, enhanced_arguments)
+            results.append({
+                "tool_call_id": tool_call.id,
+                "tool_name": tool_name,
+                "arguments": enhanced_arguments,
+                "result": result
+            })
+            
+            # Add tool result to conversation history
+            self.conversation_history.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": json.dumps(result)
+            })
+        
+        return results
+    
+    async def _enhance_arguments_with_context(self, arguments: Dict[str, Any], previous_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Enhance tool arguments with data from previous tool results"""
+        enhanced_args = arguments.copy()
+        
+        # Look for placeholder values that can be filled from previous results
+        for key, value in arguments.items():
+            if isinstance(value, str) and value.startswith("{{") and value.endswith("}}"):
+                # Extract the reference
+                reference = value[2:-2]  # Remove {{ and }}
+                
+                # Try to find the value in previous results
+                for result in previous_results:
+                    if result.get("status") == "success":
+                        result_data = result.get("result", {})
+                        if isinstance(result_data, dict):
+                            # Look for the reference in the result data
+                            if reference in result_data:
+                                enhanced_args[key] = result_data[reference]
+                                logger.info(f"🔗 Enhanced argument {key} with {reference} from previous result")
+                                break
+        
+        return enhanced_args
+    
+    async def process_user_query(self, user_message: str) -> Dict[str, Any]:
+        """Process a user query with LLM-powered tool selection and execution"""
+        if not self.llm_enabled:
+            return {"error": "LLM not enabled"}
+        
+        try:
+            # Process with LLM to get tool calls
+            llm_response = await self._process_with_llm(user_message)
+            
+            if "error" in llm_response:
+                return llm_response
+            
+            tool_calls = llm_response.get("tool_calls", [])
+            
+            if not tool_calls:
+                # No tools needed, return LLM response
+                return {
+                    "response": llm_response.get("response", ""),
+                    "tool_calls": [],
+                    "usage": llm_response.get("usage", {})
+                }
+            
+            # Execute tool chain
+            tool_results = await self._execute_tool_chain(tool_calls)
+            
+            # Get final response from LLM with tool results
+            final_response = await self._get_final_llm_response(tool_results)
+            
+            return {
+                "response": final_response,
+                "tool_calls": tool_results,
+                "usage": llm_response.get("usage", {})
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error processing user query: {e}")
+            return {"error": str(e)}
+    
+    async def _get_final_llm_response(self, tool_results: List[Dict[str, Any]]) -> str:
+        """Get final response from LLM after tool execution"""
+        if not self.llm_enabled or not self.openai_client:
+            return "Tool execution completed."
+        
+        try:
+            # Prepare summary of tool results
+            tool_summary = []
+            for result in tool_results:
+                tool_summary.append(f"Tool: {result['tool_name']}")
+                if result['result'].get('status') == 'success':
+                    tool_summary.append("Status: Success")
+                else:
+                    tool_summary.append(f"Status: Error - {result['result'].get('message', 'Unknown error')}")
+            
+            # Get final response from LLM
+            messages = self.conversation_history.copy()
+            messages.append({
+                "role": "user",
+                "content": f"Based on the tool execution results, provide a comprehensive response to the user's original request. Tool results summary:\n" + "\n".join(tool_summary)
+            })
+            
+            response = await self.openai_client.chat.completions.create(
+                model=self.llm_model,
+                messages=messages,
+                temperature=0.3
+            )
+            
+            return response.choices[0].message.content or "Tool execution completed successfully."
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting final LLM response: {e}")
+            return "Tool execution completed successfully."
     
     async def _create_authenticated_client(self, spec_data: Dict[str, Any], spec_name: str) -> httpx.AsyncClient:
         """Create an authenticated HTTP client with JSESSIONID and API key support"""
@@ -847,6 +1115,21 @@ async def get_api_relationships() -> str:
         
     except Exception as e:
         logger.error(f"❌ Error getting API relationships: {e}")
+        return json.dumps({
+            "status": "error",
+            "message": str(e)
+        }, indent=2)
+
+@app.tool()
+async def process_user_query(user_message: str) -> str:
+    """Process a user query with LLM-powered tool selection and execution"""
+    try:
+        server = await get_server()
+        result = await server.process_user_query(user_message)
+        return json.dumps(result, indent=2)
+        
+    except Exception as e:
+        logger.error(f"❌ Error processing user query: {e}")
         return json.dumps({
             "status": "error",
             "message": str(e)

@@ -5,6 +5,9 @@ pyyaml>=6.0
 flask>=3.0.0
 flask-socketio>=5.0.0
 
-# Optional: For advanced features
+# LLM Integration
 openai>=1.0.0
+azure-identity>=1.15.0
+
+# Optional: For advanced features
 mcp>=1.0.0

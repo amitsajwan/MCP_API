@@ -4,32 +4,40 @@ A sophisticated MCP server with API relationship intelligence, automatic authent
 
 ## 🧠 Key Features
 
-### 1. **JSESSIONID Authentication**
+### 1. **LLM-Powered Intelligence (GPT-4o)**
+- Natural language understanding of user queries
+- Intelligent tool selection and chaining
+- Automatic parameter passing between tools
+- Context-aware conversation memory
+- Azure OpenAI integration with Azure AD authentication
+
+### 2. **JSESSIONID Authentication**
 - Automatic login and JSESSIONID extraction
 - Session management across all API calls
 - Automatic re-authentication when needed
 
-### 2. **API Key Support**
+### 3. **API Key Support**
 - Custom API key headers
 - Per-request authentication
 - Combined with JSESSIONID for maximum security
 
-### 3. **Intelligent Response Truncation**
+### 4. **Intelligent Response Truncation**
 - Automatic truncation at MCP server level
 - Configurable limit (default: 100 items)
 - Proper JSON structure with truncation metadata
 - Prevents huge responses that break the system
 
-### 4. **API Relationship Intelligence**
-- Understands dependencies between APIs
-- Smart call ordering based on relationships
+### 5. **Dynamic API Relationship Intelligence**
+- Automatically detects relationships from OpenAPI specs
+- Smart call ordering based on detected patterns
 - Visual relationship mapping in the UI
-- Call history tracking
+- Call history tracking and learning
 
-### 5. **Multiple Tool Execution**
-- Execute multiple tools with intelligent ordering
-- Relationship-aware execution sequence
-- Batch processing capabilities
+### 6. **Intelligent Tool Chaining**
+- LLM determines which tools to call and in what order
+- Automatic parameter extraction from previous tool results
+- Complex multi-step workflow execution
+- Context-aware tool selection
 
 ## 🚀 Quick Start
 

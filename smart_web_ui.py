@@ -144,6 +144,17 @@ class SmartService:
         except Exception as e:
             logger.error(f"❌ Error getting API relationships: {e}")
             return {"status": "error", "message": str(e)}
+    
+    async def process_user_query(self, user_message: str):
+        """Process user query with LLM"""
+        if not self.initialized or not self.server:
+            return {"status": "error", "message": "Server not initialized"}
+        
+        try:
+            return await self.server.process_user_query(user_message)
+        except Exception as e:
+            logger.error(f"❌ Error processing user query: {e}")
+            return {"status": "error", "message": str(e)}
 
 # Create service instance
 service = SmartService()
@@ -203,21 +214,38 @@ def handle_message(data):
     # Emit user message
     emit('user_message', {'message': message})
     
-    # Intelligent message processing
+    # Process with LLM-powered query processing
     try:
-        # Analyze message for tool requirements
-        tools = async_loop.run_async(service.get_tools())
+        result = async_loop.run_async(service.process_user_query(message))
         
-        # Simple response for now - in a real implementation, you'd integrate with an LLM
-        response = f"I received your message: '{message}'\n\n"
-        response += f"🧠 Smart Analysis:\n"
-        response += f"- I have access to {len(tools)} API tools\n"
-        response += f"- I can understand API relationships and call order\n"
-        response += f"- I automatically truncate large responses to 100 items\n"
-        response += f"- I handle JSESSIONID and API key authentication\n\n"
-        response += "You can ask me to execute specific tools or set up authentication credentials."
-        
-        emit('assistant_message', {'message': response})
+        if result.get("error"):
+            emit('error', {'message': f'❌ {result["error"]}'})
+        else:
+            # Emit the LLM response
+            response = result.get("response", "No response generated")
+            emit('assistant_message', {'message': response})
+            
+            # Emit tool execution details if any
+            tool_calls = result.get("tool_calls", [])
+            if tool_calls:
+                logger.info(f"🔧 Executed {len(tool_calls)} tools via LLM")
+                for i, tool_call in enumerate(tool_calls, 1):
+                    tool_name = tool_call.get("tool_name", "unknown")
+                    success = tool_call.get("result", {}).get("status") == "success"
+                    status = "✅ Success" if success else "❌ Failed"
+                    
+                    emit('tool_execution', {
+                        'tool_name': tool_name,
+                        'status': status,
+                        'args': tool_call.get("arguments", {}),
+                        'result': tool_call.get("result", {}),
+                        'error': tool_call.get("result", {}).get("message", "") if not success else ""
+                    })
+            
+            # Emit usage statistics if available
+            usage = result.get("usage", {})
+            if usage:
+                emit('usage_stats', {'usage': usage})
         
     except Exception as e:
         logger.error(f"❌ Processing error: {e}")
