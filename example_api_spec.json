@@ -1,0 +1,324 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Financial Services API",
+    "version": "1.0.0",
+    "description": "Example API for testing the Intelligent API Orchestration System"
+  },
+  "servers": [
+    {
+      "url": "https://api.example-financial.com/v1",
+      "description": "Production server"
+    }
+  ],
+  "paths": {
+    "/accounts/{account_id}": {
+      "get": {
+        "summary": "Get account information",
+        "description": "Retrieve detailed information about a specific account",
+        "operationId": "getAccount",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Unique identifier for the account"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Account information retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {"type": "string"},
+                    "account_name": {"type": "string"},
+                    "account_type": {"type": "string"},
+                    "balance": {"type": "number"},
+                    "currency": {"type": "string"},
+                    "status": {"type": "string"}
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Account not found"
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/balance": {
+      "get": {
+        "summary": "Get account balance",
+        "description": "Retrieve the current balance for a specific account",
+        "operationId": "getAccountBalance",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Balance retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account_id": {"type": "string"},
+                    "balance": {"type": "number"},
+                    "currency": {"type": "string"},
+                    "last_updated": {"type": "string", "format": "date-time"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts/{account_id}/transactions": {
+      "get": {
+        "summary": "Get account transactions",
+        "description": "Retrieve transaction history for a specific account",
+        "operationId": "getAccountTransactions",
+        "parameters": [
+          {
+            "name": "account_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            },
+            "description": "Maximum number of transactions to return"
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "Start date for transaction history"
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "description": "End date for transaction history"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Transactions retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "transactions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "transaction_id": {"type": "string"},
+                          "date": {"type": "string", "format": "date-time"},
+                          "description": {"type": "string"},
+                          "amount": {"type": "number"},
+                          "type": {"type": "string", "enum": ["credit", "debit"]}
+                        }
+                      }
+                    },
+                    "total_count": {"type": "integer"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/portfolios/{portfolio_id}": {
+      "get": {
+        "summary": "Get portfolio information",
+        "description": "Retrieve detailed information about a portfolio",
+        "operationId": "getPortfolio",
+        "parameters": [
+          {
+            "name": "portfolio_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Portfolio information retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "portfolio_id": {"type": "string"},
+                    "portfolio_name": {"type": "string"},
+                    "total_value": {"type": "number"},
+                    "currency": {"type": "string"},
+                    "holdings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "symbol": {"type": "string"},
+                          "shares": {"type": "number"},
+                          "value": {"type": "number"},
+                          "percentage": {"type": "number"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/portfolios/{portfolio_id}/performance": {
+      "get": {
+        "summary": "Get portfolio performance",
+        "description": "Retrieve performance metrics for a portfolio",
+        "operationId": "getPortfolioPerformance",
+        "parameters": [
+          {
+            "name": "portfolio_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["1d", "1w", "1m", "3m", "6m", "1y", "all"],
+              "default": "1m"
+            },
+            "description": "Time period for performance calculation"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Performance data retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "portfolio_id": {"type": "string"},
+                    "period": {"type": "string"},
+                    "total_return": {"type": "number"},
+                    "total_return_percentage": {"type": "number"},
+                    "daily_returns": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {"type": "string", "format": "date"},
+                          "return": {"type": "number"},
+                          "value": {"type": "number"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/users/{user_id}/accounts": {
+      "get": {
+        "summary": "Get user accounts",
+        "description": "Retrieve all accounts for a specific user",
+        "operationId": "getUserAccounts",
+        "parameters": [
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User accounts retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "user_id": {"type": "string"},
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "account_id": {"type": "string"},
+                          "account_name": {"type": "string"},
+                          "account_type": {"type": "string"},
+                          "balance": {"type": "number"},
+                          "currency": {"type": "string"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {"type": "string"},
+          "message": {"type": "string"},
+          "code": {"type": "integer"}
+        }
+      }
+    }
+  }
+}
