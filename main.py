@@ -19,6 +19,7 @@ import uvicorn
 from semantic_state_manager import SemanticStateManager
 from tool_manager import ToolManager
 from adaptive_orchestrator import AdaptiveOrchestrator
+from web_mcp_bridge import WebMCPEndpoint
 
 # Configure logging
 logging.basicConfig(
@@ -38,6 +39,7 @@ app = FastAPI(
 semantic_state_manager: Optional[SemanticStateManager] = None
 tool_manager: Optional[ToolManager] = None
 orchestrator: Optional[AdaptiveOrchestrator] = None
+web_mcp_endpoint: Optional[WebMCPEndpoint] = None
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -109,7 +111,11 @@ async def startup_event():
         )
         logger.info("✓ Adaptive orchestrator initialized")
         
-        logger.info("🚀 System ready for intelligent API orchestration!")
+        # Initialize Web MCP endpoint
+        web_mcp_endpoint = WebMCPEndpoint()
+        logger.info("✓ Web MCP bridge initialized")
+        
+        logger.info("🚀 System ready for intelligent API orchestration with MCP support!")
         
     except Exception as e:
         logger.error(f"Failed to initialize system: {e}")
@@ -331,6 +337,30 @@ async def websocket_endpoint(websocket: WebSocket):
     finally:
         # Clean up connection
         manager.disconnect(execution_id)
+
+
+# MCP WebSocket endpoint
+@app.websocket("/mcp-ws")
+async def mcp_websocket_endpoint(websocket: WebSocket):
+    """MCP WebSocket endpoint for browser-based MCP communication"""
+    if web_mcp_endpoint:
+        await web_mcp_endpoint.websocket_endpoint(websocket)
+    else:
+        await websocket.accept()
+        await websocket.send_json({
+            "type": "error",
+            "message": "MCP endpoint not initialized",
+            "timestamp": datetime.utcnow().isoformat()
+        })
+        await websocket.close()
+
+
+# MCP Test Interface
+@app.get("/mcp-ui", response_class=HTMLResponse)
+async def get_mcp_ui():
+    """MCP test interface for browser-based testing"""
+    from web_mcp_bridge import MCP_TEST_HTML
+    return MCP_TEST_HTML
 
 
 # Simple HTML interface for testing

@@ -18,6 +18,9 @@ fastmcp==0.1.0
 httpx==0.25.2
 jsonschema==4.20.0
 
+# MCP (Model Context Protocol)
+mcp==0.1.0
+
 # Utilities
 python-multipart==0.0.6
 python-json-logger==2.0.7

@@ -1,268 +1,461 @@
 """
-MCP Client for Azure GPT-4o
----------------------------
-- Discovers tools from any MCP server (stdio or HTTP transport)
-- Handles hundreds of dynamic tools from OpenAPI specs
-- Supports tool chaining: LLM can use multiple tools in sequence
-- Truncates / summarizes large payloads to avoid context overflow
+MCP Client Implementation - Model Context Protocol Client
+Connects to MCP servers and provides tool execution capabilities
 """
 
-import os
-import json
 import asyncio
+import json
 import logging
-from typing import Dict, Any, List
+from typing import Dict, List, Any, Optional, Union
+from datetime import datetime
+import subprocess
+import os
 
-from fastmcp import Client as MCPClient
-from fastmcp.client import PythonStdioTransport
-
-# Conditional Azure imports
-try:
-    from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-    from openai import AsyncAzureOpenAI
-    AZURE_AVAILABLE = True
-except ImportError:
-    AZURE_AVAILABLE = False
-    # Define fallback classes
-    class DefaultAzureCredential:
-        pass
-    class AsyncAzureOpenAI:
-        pass
-    def get_bearer_token_provider(*args, **kwargs):
-        return None
-
-
-# ---------- CONFIG ----------
-AZURE_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://your-resource.openai.azure.com/")
-AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o")  # your GPT-4o deployment name
-API_VERSION = "2024-02-01"
-MAX_TOKENS_TOOL_RESPONSE = 4000  # safeguard for huge payloads
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-
-# Configure comprehensive logging for MCP client
-logging.basicConfig(
-    level=LOG_LEVEL,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('mcp_client.log', encoding='utf-8')
-    ]
+from mcp.client import ClientSession
+from mcp.client.stdio import stdio_client
+from mcp.types import (
+    Tool, Resource, CallToolRequest, ListToolsRequest, 
+    ListResourcesRequest, ReadResourceRequest
 )
 
+logger = logging.getLogger(__name__)
 
-# ---------- HELPERS ----------
-def count_tokens(text: str) -> int:
-    """Rough token counter."""
-    return len(text.split())
 
-def safe_truncate(obj: Any, max_tokens: int = MAX_TOKENS_TOOL_RESPONSE) -> Any:
-    """Truncate huge tool responses while preserving JSON structure for LLM consumption."""
+class IntelligentOrchestrationMCPClient:
+    """
+    MCP Client for Intelligent API Orchestration System
+    Connects to MCP servers and executes orchestration tools
+    """
     
-    # Handle CallToolResult objects specifically
-    if hasattr(obj, 'isError') and hasattr(obj, 'content'):
-        # Convert CallToolResult to a serializable dict
-        serializable_obj = {
-            "isError": obj.isError,
-            "content": []
+    def __init__(self, server_command: Optional[List[str]] = None):
+        """
+        Initialize MCP client
+        
+        Args:
+            server_command: Command to start the MCP server
+        """
+        self.server_command = server_command or [
+            "python", "-m", "mcp_server"
+        ]
+        self.session: Optional[ClientSession] = None
+        self.available_tools: Dict[str, Tool] = {}
+        self.available_resources: Dict[str, Resource] = {}
+        self.connected = False
+    
+    async def connect(self) -> bool:
+        """Connect to the MCP server"""
+        try:
+            if self.session:
+                await self.disconnect()
+            
+            # Start server process
+            self.server_process = subprocess.Popen(
+                self.server_command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Create client session
+            self.session = await stdio_client(
+                self.server_process.stdin,
+                self.server_process.stdout
+            )
+            
+            # Initialize session
+            await self.session.initialize()
+            
+            # Load available tools and resources
+            await self._load_capabilities()
+            
+            self.connected = True
+            logger.info("Successfully connected to MCP server")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to connect to MCP server: {e}")
+            self.connected = False
+            return False
+    
+    async def disconnect(self):
+        """Disconnect from the MCP server"""
+        try:
+            if self.session:
+                await self.session.close()
+                self.session = None
+            
+            if hasattr(self, 'server_process'):
+                self.server_process.terminate()
+                self.server_process.wait()
+            
+            self.connected = False
+            logger.info("Disconnected from MCP server")
+            
+        except Exception as e:
+            logger.error(f"Error disconnecting: {e}")
+    
+    async def _load_capabilities(self):
+        """Load available tools and resources from server"""
+        try:
+            # Load tools
+            tools_response = await self.session.list_tools()
+            self.available_tools = {
+                tool.name: tool for tool in tools_response.tools
+            }
+            
+            # Load resources
+            resources_response = await self.session.list_resources()
+            self.available_resources = {
+                resource.uri: resource for resource in resources_response.resources
+            }
+            
+            logger.info(f"Loaded {len(self.available_tools)} tools and {len(self.available_resources)} resources")
+            
+        except Exception as e:
+            logger.error(f"Failed to load capabilities: {e}")
+    
+    async def execute_query(self, query: str, max_iterations: int = 20) -> Dict[str, Any]:
+        """
+        Execute a natural language query using intelligent orchestration
+        
+        Args:
+            query: Natural language query to execute
+            max_iterations: Maximum number of orchestration iterations
+            
+        Returns:
+            Execution result with final answer and details
+        """
+        if not self.connected:
+            await self.connect()
+        
+        try:
+            result = await self.session.call_tool(
+                "execute_query",
+                {
+                    "query": query,
+                    "max_iterations": max_iterations
+                }
+            )
+            
+            # Parse result
+            if result.content and len(result.content) > 0:
+                content = result.content[0].text
+                return json.loads(content)
+            else:
+                return {"error": "No result content received"}
+                
+        except Exception as e:
+            logger.error(f"Query execution failed: {e}")
+            return {"error": str(e)}
+    
+    async def load_api_spec(self, api_spec: Dict[str, Any], api_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Load an API specification into the orchestration system
+        
+        Args:
+            api_spec: OpenAPI specification as dictionary
+            api_name: Optional name for the API
+            
+        Returns:
+            Loading result with tool count
+        """
+        if not self.connected:
+            await self.connect()
+        
+        try:
+            result = await self.session.call_tool(
+                "load_api_spec",
+                {
+                    "api_spec": api_spec,
+                    "api_name": api_name
+                }
+            )
+            
+            if result.content and len(result.content) > 0:
+                content = result.content[0].text
+                return json.loads(content)
+            else:
+                return {"error": "No result content received"}
+                
+        except Exception as e:
+            logger.error(f"API spec loading failed: {e}")
+            return {"error": str(e)}
+    
+    async def query_semantic_state(self, 
+                                 query: str, 
+                                 context_types: Optional[List[str]] = None,
+                                 limit: int = 5) -> Dict[str, Any]:
+        """
+        Query the semantic state store for relevant information
+        
+        Args:
+            query: Natural language query for semantic search
+            context_types: Filter by context types
+            limit: Maximum number of results
+            
+        Returns:
+            Query results with relevant states
+        """
+        if not self.connected:
+            await self.connect()
+        
+        try:
+            arguments = {"query": query, "limit": limit}
+            if context_types:
+                arguments["context_types"] = context_types
+            
+            result = await self.session.call_tool(
+                "query_semantic_state",
+                arguments
+            )
+            
+            if result.content and len(result.content) > 0:
+                content = result.content[0].text
+                return json.loads(content)
+            else:
+                return {"error": "No result content received"}
+                
+        except Exception as e:
+            logger.error(f"Semantic state query failed: {e}")
+            return {"error": str(e)}
+    
+    async def get_execution_status(self, execution_id: str) -> Dict[str, Any]:
+        """
+        Get status of an active orchestration execution
+        
+        Args:
+            execution_id: Execution ID to check status for
+            
+        Returns:
+            Execution status information
+        """
+        if not self.connected:
+            await self.connect()
+        
+        try:
+            result = await self.session.call_tool(
+                "get_execution_status",
+                {"execution_id": execution_id}
+            )
+            
+            if result.content and len(result.content) > 0:
+                content = result.content[0].text
+                return json.loads(content)
+            else:
+                return {"error": "No result content received"}
+                
+        except Exception as e:
+            logger.error(f"Status check failed: {e}")
+            return {"error": str(e)}
+    
+    async def list_available_tools(self) -> Dict[str, Any]:
+        """
+        List all available API tools loaded in the system
+        
+        Returns:
+            Tool information and context
+        """
+        if not self.connected:
+            await self.connect()
+        
+        try:
+            result = await self.session.call_tool("list_available_tools", {})
+            
+            if result.content and len(result.content) > 0:
+                content = result.content[0].text
+                return json.loads(content)
+            else:
+                return {"error": "No result content received"}
+                
+        except Exception as e:
+            logger.error(f"Tool listing failed: {e}")
+            return {"error": str(e)}
+    
+    async def get_system_stats(self) -> Dict[str, Any]:
+        """
+        Get comprehensive system statistics and health information
+        
+        Returns:
+            System statistics and health data
+        """
+        if not self.connected:
+            await self.connect()
+        
+        try:
+            result = await self.session.call_tool("get_system_stats", {})
+            
+            if result.content and len(result.content) > 0:
+                content = result.content[0].text
+                return json.loads(content)
+            else:
+                return {"error": "No result content received"}
+                
+        except Exception as e:
+            logger.error(f"Stats retrieval failed: {e}")
+            return {"error": str(e)}
+    
+    async def read_resource(self, uri: str) -> Dict[str, Any]:
+        """
+        Read a resource from the MCP server
+        
+        Args:
+            uri: Resource URI to read
+            
+        Returns:
+            Resource content
+        """
+        if not self.connected:
+            await self.connect()
+        
+        try:
+            result = await self.session.read_resource(uri)
+            
+            if result.contents and len(result.contents) > 0:
+                content = result.contents[0].text
+                return json.loads(content)
+            else:
+                return {"error": "No resource content received"}
+                
+        except Exception as e:
+            logger.error(f"Resource reading failed: {e}")
+            return {"error": str(e)}
+    
+    def get_available_tools(self) -> List[str]:
+        """Get list of available tool names"""
+        return list(self.available_tools.keys())
+    
+    def get_available_resources(self) -> List[str]:
+        """Get list of available resource URIs"""
+        return list(self.available_resources.keys())
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """Perform a health check on the MCP connection"""
+        try:
+            if not self.connected:
+                await self.connect()
+            
+            stats = await self.get_system_stats()
+            
+            return {
+                "connected": self.connected,
+                "tools_available": len(self.available_tools),
+                "resources_available": len(self.available_resources),
+                "system_stats": stats
+            }
+            
+        except Exception as e:
+            return {
+                "connected": False,
+                "error": str(e)
+            }
+
+
+class MCPOrchestrationManager:
+    """
+    High-level manager for MCP-based orchestration
+    Provides simplified interface for common operations
+    """
+    
+    def __init__(self, server_command: Optional[List[str]] = None):
+        self.client = IntelligentOrchestrationMCPClient(server_command)
+    
+    async def __aenter__(self):
+        await self.client.connect()
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.client.disconnect()
+    
+    async def ask(self, question: str) -> str:
+        """
+        Ask a question and get an intelligent orchestrated answer
+        
+        Args:
+            question: Natural language question
+            
+        Returns:
+            Intelligent answer from orchestration
+        """
+        result = await self.client.execute_query(question)
+        
+        if "error" in result:
+            return f"Error: {result['error']}"
+        
+        return result.get("final_answer", "No answer provided")
+    
+    async def add_api(self, api_spec: Dict[str, Any], api_name: Optional[str] = None) -> bool:
+        """
+        Add a new API to the orchestration system
+        
+        Args:
+            api_spec: OpenAPI specification
+            api_name: Optional name for the API
+            
+        Returns:
+            Success status
+        """
+        result = await self.client.load_api_spec(api_spec, api_name)
+        return "error" not in result and result.get("success", False)
+    
+    async def remember(self, query: str, context_types: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        """
+        Query the system's semantic memory
+        
+        Args:
+            query: Natural language query for memory
+            context_types: Filter by context types
+            
+        Returns:
+            Relevant memories
+        """
+        result = await self.client.query_semantic_state(query, context_types)
+        
+        if "error" in result:
+            return []
+        
+        return result.get("results", [])
+    
+    async def status(self) -> Dict[str, Any]:
+        """Get system status and health"""
+        return await self.client.health_check()
+
+
+# Example usage and testing
+async def main():
+    """Test the MCP client"""
+    
+    async with MCPOrchestrationManager() as manager:
+        # Test system status
+        status = await manager.status()
+        print(f"System Status: {status}")
+        
+        # Test loading an API spec
+        sample_spec = {
+            "openapi": "3.0.0",
+            "info": {"title": "Test API", "version": "1.0.0"},
+            "servers": [{"url": "https://api.example.com"}],
+            "paths": {
+                "/test": {
+                    "get": {
+                        "summary": "Test endpoint",
+                        "responses": {"200": {"description": "Success"}}
+                    }
+                }
+            }
         }
         
-        # Process content items
-        for content_item in obj.content:
-            if hasattr(content_item, 'text'):
-                serializable_obj["content"].append({
-                    "text": content_item.text
-                })
-            else:
-                # Handle other content types
-                serializable_obj["content"].append(str(content_item))
+        success = await manager.add_api(sample_spec, "test_api")
+        print(f"API Loading Success: {success}")
         
-        return safe_truncate(serializable_obj, max_tokens)
-    
-    # Handle objects with structured_content attribute
-    if hasattr(obj, 'structured_content'):
-        try:
-            # Try to serialize the structured_content first
-            text = json.dumps(obj.structured_content)
-        except (TypeError, ValueError):
-            # If structured_content is not serializable, convert to string
-            text = json.dumps(str(obj.structured_content))
-    else:
-        try:
-            text = json.dumps(obj)
-        except (TypeError, ValueError):
-            # If object is not JSON serializable, convert to string representation
-            text = json.dumps(str(obj))
-    
-    tokens = count_tokens(text)
-    if tokens <= max_tokens:
-        # Ensure the object is JSON serializable before returning
-        try:
-            json.dumps(obj)
-            return obj
-        except (TypeError, ValueError):
-            # If not serializable, convert to a serializable format
-            return {"data": str(obj), "type": type(obj).__name__}
-    
-    # Truncate while preserving JSON structure and ensuring serializability
-    if isinstance(obj, list):
-        # For lists, take a subset and add truncation info
-        subset = obj[:100] if len(obj) > 100 else obj
-        if len(obj) > 100:
-            return {
-                "note": f"Response truncated from {len(obj)} items to 100 items for safety.",
-                "truncated_items": subset
-            }
-        return subset
-    elif isinstance(obj, dict):
-        # For dicts, take a subset of key-value pairs
-        items = list(obj.items())
-        if len(items) > 50:
-            subset = dict(items[:50])
-            return {
-                "note": f"Response truncated from {len(items)} key-value pairs to 50 pairs for safety.",
-                "truncated_data": subset
-            }
-        return obj
-    else:
-        # For other types, truncate the string representation
-        str_repr = str(obj)
-        if len(str_repr) > 5000:
-            return {
-                "note": f"Response truncated from {len(str_repr)} characters to 5000 characters for safety.",
-                "truncated_text": str_repr[:5000]
-            }
-        return {"data": str_repr, "type": type(obj).__name__}
-
-
-async def create_azure_client() -> AsyncAzureOpenAI:
-    """Create Azure OpenAI client with Azure AD token provider."""
-    if not AZURE_AVAILABLE:
-        raise ImportError("Azure dependencies not available. Install azure-identity and openai packages.")
-    
-    logging.info("🔄 [MCP_CLIENT] Creating Azure OpenAI client...")
-    credential = DefaultAzureCredential()
-    token_provider = get_bearer_token_provider(
-        credential, "https://cognitiveservices.azure.com/.default"
-    )
-    client = AsyncAzureOpenAI(
-        azure_endpoint=AZURE_ENDPOINT,
-        azure_ad_token_provider=token_provider,
-        api_version=API_VERSION
-    )
-    logging.info("✅ [MCP_CLIENT] Azure OpenAI client created")
-    return client
-
-
-async def list_and_prepare_tools(mcp: MCPClient) -> List[Dict[str, Any]]:
-    """Fetch available tools and convert them for Azure OpenAI."""
-    logging.info("🔄 [MCP_CLIENT] Fetching tools from MCP server...")
-    tools = await mcp.list_tools()
-    logging.info(f"🔄 [MCP_CLIENT] Received {len(tools)} tools from MCP server")
-    
-    formatted = []
-    for i, tool in enumerate(tools, 1):
-        logging.info(f"🔧 [MCP_CLIENT] Processing tool {i}/{len(tools)}: {tool.name}")
-        formatted.append({
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": tool.description or "",
-                "parameters": tool.inputSchema or {"type": "object", "properties": {}}
-            }
-        })
-    logging.info(f"✅ [MCP_CLIENT] Loaded {len(formatted)} tools from MCP server")
-    return formatted
-
-
-async def run_chat(mcp_cmd: str, user_query: str):
-    """Main chat loop with tool calling support."""
-    # --- Connect to MCP server ---
-    cmd_parts = mcp_cmd.split()
-    script_path = cmd_parts[1]  # mcp_server_fastmcp2.py
-    args = cmd_parts[2:]  # ['--transport', 'stdio']
-    transport = PythonStdioTransport(script_path, args=args)
-    async with MCPClient(transport) as mcp:
-        tools = await list_and_prepare_tools(mcp)
-        azure_client = await create_azure_client()
-
-        # Conversation state for multi-step tool chaining
-        messages = [
-            {"role": "system", "content": (
-                "You are an intelligent assistant. "
-                "Use the available tools when helpful. "
-                "If a tool may return thousands of records, first refine the query. "
-                "Truncate or summarize results if they are huge."
-            )},
-            {"role": "user", "content": user_query}
-        ]
-
-        while True:
-            # Call LLM
-            response = await azure_client.chat.completions.create(
-                model=AZURE_DEPLOYMENT,
-                messages=messages,
-                tools=tools,
-                tool_choice="auto"
-            )
-
-            choice = response.choices[0]
-            if choice.finish_reason == "tool_calls":
-                # Add the assistant message with tool_calls to conversation history
-                assistant_message = {
-                    "role": "assistant",
-                    "content": choice.message.content or "",
-                    "tool_calls": [
-                        {
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_call.function.name,
-                                "arguments": tool_call.function.arguments or "{}"
-                            }
-                        }
-                        for tool_call in choice.message.tool_calls
-                    ]
-                }
-                messages.append(assistant_message)
-                
-                # Execute tool calls and add tool responses
-                for tool_call in choice.message.tool_calls:
-                    tool_name = tool_call.function.name
-                    args = json.loads(tool_call.function.arguments or "{}")
-                    logging.info(f"🔧 LLM requested tool: {tool_name} with {args}")
-
-                    try:
-                        raw_result = await mcp.call_tool(tool_name, args)
-                        result = safe_truncate(raw_result)
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(result)
-                        })
-                    except Exception as e:
-                        logging.error(f"❌ Tool call failed: {e}")
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": f"Error: {e}"
-                        })
-                continue  # Loop to let LLM decide next step
-
-            # Final response
-            content = choice.message.content or ""
-            print(f"\n🤖 Assistant: {content}\n")
-            break
+        # Test asking a question
+        answer = await manager.ask("What tools are available in the system?")
+        print(f"Answer: {answer}")
+        
+        # Test memory query
+        memories = await manager.remember("recent API calls")
+        print(f"Memories: {len(memories)} found")
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="MCP Client with Azure GPT-4o")
-    parser.add_argument("query", help="User query")
-    parser.add_argument(
-        "--server",
-        default="python mcp_server_fastmcp2.py --transport stdio",
-        help="Command to start MCP server (default: stdio)"
-    )
-    args = parser.parse_args()
-
-    asyncio.run(run_chat(args.server, args.query))
+    asyncio.run(main())
