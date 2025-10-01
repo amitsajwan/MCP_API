@@ -78,11 +78,54 @@ async def main():
             logger.error(f"❌ Analysis failed: {analysis['error']}")
             return
         
-        # 5. Display results
-        logger.info("📊 Analysis Results:")
+        # 5. Test Query Router (Hybrid Intelligence)
+        logger.info("🔀 Testing Query Router...")
+        
+        # Create Query Router
+        from core.query_router import QueryRouter, HybridQueryProcessor
+        query_router = QueryRouter(vector_store, analyzer.use_case_library)
+        
+        # Test query routing
+        test_queries = [
+            "Show me payment analysis",
+            "Create financial dashboard", 
+            "Analyze cash flow",
+            "Get portfolio summary"
+        ]
+        
         print("\n" + "="*80)
-        print("🎯 INTELLIGENT API ANALYSIS RESULTS")
+        print("🎯 HYBRID INTELLIGENCE ENGINE RESULTS")
         print("="*80)
+        
+        print(f"\n🔀 Query Routing Tests:")
+        for query in test_queries:
+            query_plan = await query_router.route_query(query)
+            print(f"   Query: '{query}'")
+            print(f"   Pipeline: {query_plan.plan_type.value}")
+            print(f"   Confidence: {query_plan.confidence:.2f}")
+            if hasattr(query_plan, 'use_case_id'):
+                print(f"   Use Case ID: {query_plan.use_case_id}")
+            if hasattr(query_plan, 'similarity'):
+                print(f"   Similarity: {query_plan.similarity:.3f}")
+            print()
+        
+        # Get routing statistics
+        routing_stats = query_router.get_routing_statistics()
+        print(f"📊 Query Routing Statistics:")
+        print(f"   Total Queries: {routing_stats['total_queries']}")
+        print(f"   Pre-Analyzed Routes: {routing_stats['pre_analyzed_routes']} ({routing_stats['pre_analyzed_percentage']:.1f}%)")
+        print(f"   Adaptive Routes: {routing_stats['adaptive_routes']} ({routing_stats['adaptive_percentage']:.1f}%)")
+        print(f"   Cache Hit Rate: {routing_stats['cache_hit_rate']:.1f}%")
+        print(f"   Average Similarity: {routing_stats['average_similarity']:.3f}")
+        
+        # 6. Display Analysis Results
+        logger.info("📊 Analysis Results:")
+        print(f"\n📚 Use Case Library:")
+        print(f"   Total Use Cases: {len(analyzer.use_case_library)}")
+        library_stats = analyzer.get_use_case_library_stats()
+        print(f"   Categories: {', '.join(library_stats['categories'])}")
+        print(f"   Total Executions: {library_stats['execution_stats']['total_executions']}")
+        print(f"   Average Success Rate: {library_stats['execution_stats']['average_success_rate']:.2%}")
         
         # Analysis Summary
         summary = analysis["analysis_summary"]
