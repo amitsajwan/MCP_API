@@ -1,50 +1,73 @@
-# Environment & secrets
-.env
-.env.*
-*.env
-
 # Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.pyc
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
 *.egg-info/
-.pytest_cache/
-.coverage
-coverage.xml
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
 
 # Logs
 *.log
-mcp_*.log
-web_ui.log
+logs/
+*.log.*
 
-# Node / frontend
-frontend/node_modules/
-frontend/dist/
-node_modules/
-dist/
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
 
-# Virtual envs
-.venv/
-venv/
-env/
+# Streamlit
+.streamlit/
 
-# OS noise
-*.DS_Store
-Thumbs.db
+# OS
 .DS_Store
+Thumbs.db
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Build artifacts
-build/
-tmp/
+# Project Specific
+*.sqlite
+*.db
 cache/
+temp/
+tmp/
 
-# MCP specific
-token_cache.txt
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Data files (if any)
+data/
+*.csv
+*.json.bak
