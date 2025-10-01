@@ -7,6 +7,7 @@
 - [System Architecture](ARCHITECTURE.md) - Complete system architecture
 - [MCP Protocol Flow](MCP_PROTOCOL.md) - How MCP protocol is used
 - [Adaptive Query Flow](ADAPTIVE_QUERY.md) - Intelligent query processing
+- [Dependency Analysis](DEPENDENCY_ANALYSIS.md) - Intelligent API analysis and use case generation
 
 ## User Guides
 - [Demo System Guide](DEMO_GUIDE.md) - Complete walkthrough
